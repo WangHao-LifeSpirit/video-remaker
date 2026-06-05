@@ -1,8 +1,10 @@
-# Release v0.7
+# Release v1.0
 
-当前版本：v0.7
+当前版本：v1.0
 
-这是“短视频复刻自动化工作台”的本地交付版本。它可以在本机完成从用户材料到原创改编方案、真实/模拟素材、FFmpeg 成片和制作包导出的完整闭环。
+版本定位：本地网页端短视频复刻自动化工作台。
+
+这是一个本地运行版本，不部署公网，不包含任何 API Key。客户需要在自己的机器上安装依赖、配置 `.env`，并自行承担 DeepSeek / Seedance 等第三方 API 的调用成本。
 
 ## 已实现能力
 
@@ -17,32 +19,35 @@
 - Mock fallback：
   - LLM 失败时记录 recoverable error 并降级 mock。
   - 视频 provider 不满足成本保护条件时降级 mock。
-- Seedance 单/多 scene 真实生成，受 `scene-limit` 和成本保护控制。
+- Seedance 真实生成受限数量的视频片段。
 - 已成功生成的 Seedance scene 自动复用，避免重复消耗额度。
 - FFmpeg 合成可播放 `final.mp4`。
 - 导出 Markdown 制作包和 JSON 项目包。
 - 网页任务详情页支持：
-  - 当前任务状态
-  - provider / scene-limit / paid API 状态
-  - dry-run 预估
+  - dry-run 成本预估
   - 一键生成
-  - 步骤状态展示
+  - 后台 job 执行
+  - 页面轮询进度
+  - 历史 jobs
+  - 防重复运行
+  - failed job 重试
+  - 页面内 `final.mp4` 预览
   - 下载 `final.mp4`、`production-package.md`、`project-package.json`
-- CLI 支持逐步运行和 `run-full` 一键运行。
+  - 历史错误日志折叠展示
+  - 历史错误日志安全清理与备份
+- CLI 支持逐步运行、`run-full` 一键运行和 `clear-errors` 清理历史错误。
 
 ## 未实现能力
 
-- 页面内视频播放器预览。
-- 后台任务队列和实时进度推送。
-- Agent review cycle，总控自动审稿、打回和重写。
-- 上传视频真实处理：ffprobe 元信息、抽帧、字幕读取。
-- ASR 转写。
+- 多用户、登录、权限和计费。
 - TTS 配音。
+- ASR 转写。
 - 字幕烧录。
-- 自动下载公开视频。
-- 抖音/短视频链接深度解析增强。
-- 多用户、登录、计费。
+- 上传视频真实处理：ffprobe 元信息、抽帧、字幕读取。
+- 完整抖音/短视频链接自动解析。
+- 生产级任务队列、任务取消、并发控制和服务重启恢复。
 - 全量无限 scene 真实生成。
+- Kling / Luma 不是当前稳定交付链路。
 
 ## 安装
 
@@ -132,8 +137,8 @@ http://localhost:3000
 5. 先点 `Dry-run 预估`。
 6. 确认成本保护提示和步骤计划。
 7. 点 `一键生成`。
-
-生成完成后页面会显示步骤状态和下载入口。
+8. 页面会创建后台 job，并轮询显示步骤进度。
+9. 生成完成后页面会刷新视频预览和下载入口。
 
 ## 下载结果
 
@@ -175,19 +180,19 @@ npm run video-maker -- run-full \
   --export
 ```
 
-新建任务并一键流程：
+清理历史错误日志：
 
 ```bash
-npm run video-maker -- run-full \
-  --provider seedance \
-  --scene-limit 3 \
-  --target-platform douyin \
-  --duration 15s \
-  --style "clean cinematic AI workflow" \
-  --text-notes "一个大学生用 AI 搭建自己的个人工作流" \
-  --assemble \
-  --export
+npm run video-maker -- clear-errors --task <task_id>
 ```
+
+清理会先备份到：
+
+```text
+data/tasks/{task_id}/backups/errors-backup-{timestamp}.json
+```
+
+不会删除 `final.mp4`、导出包、视频素材或 job 历史。
 
 ## 切换 mock / Seedance
 
@@ -209,7 +214,8 @@ npm run video-maker -- run-full --task <task_id> --provider seedance --scene-lim
 
 - 已存在的分析、分镜、改编、prompt 会跳过。
 - 已成功的 Seedance scene 会复用本地视频。
-- 不会重复生成 s1/s2/s3。
+- 后台已有 queued/running job 时不会创建第二个 job。
+- 不会重复生成已成功的 s1/s2/s3。
 
 强制重生成：
 
@@ -239,27 +245,26 @@ npm run video-maker -- run-full --task <task_id> --provider seedance --scene-lim
 
 ### 为什么只生成前 3 个 scenes？
 
-这是 v0.7 的成本保护策略。全量 scene 生成留到后续版本。
+这是 v1.0 的成本保护策略。全量 scene 生成留到后续版本。
 
 ### 为什么重新点击一键生成没有新增扣费？
 
 系统会复用已成功的 Seedance scene。只有使用 `--force` 或删除已有素材后才会重新生成。
 
-### 任务失败怎么办？
+### 为什么页面里还有历史错误？
 
-查看任务详情页错误记录，或打开：
-
-```text
-data/tasks/{task_id}/task.json
-data/tasks/{task_id}/assets.json
-```
-
-recoverable error 通常可以通过补充材料、修正 `.env` 或降低 scene-limit 后继续运行。
+历史错误是调试日志，不一定代表当前任务失败。任务详情页默认折叠历史错误，只展示最近 job 的状态和错误。需要清理时使用页面按钮或 `clear-errors` CLI。
 
 ### 如何关闭网页服务？
 
 在运行 `npm run dev` 的终端按 `Ctrl+C`。
 
-## 交付说明
+## 安全边界
 
-v0.7 是本地可运行交付版，适合小范围客户演示和内部试用。它已经具备“输入材料 → Agent 分析 → 原创改编 → Seedance 片段 → FFmpeg 成片 → 下载制作包”的主链路，但还不是多用户 SaaS 生产系统。
+- 不自动下载公开视频。
+- 不绕过登录、验证码、反爬或平台限制。
+- 不默认搬运或复制原视频。
+- 对公开视频只做结构学习和原创改编。
+- API Key 只放在 `.env`。
+- 真实视频生成必须通过成本保护开关。
+- Mock 和真实结果都在 JSON 中明确标记。

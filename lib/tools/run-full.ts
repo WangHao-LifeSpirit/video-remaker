@@ -26,6 +26,13 @@ export type RunFullInput = Partial<TaskUserInputs> & {
   force?: boolean;
   resume?: boolean;
   dryRun?: boolean;
+  onStepUpdate?: (update: RunFullStepUpdate) => void | Promise<void>;
+};
+
+export type RunFullStepUpdate = {
+  name: string;
+  status: "running" | "success" | "failed" | "skipped";
+  message?: string;
 };
 
 export type RunFullResult = {
@@ -245,6 +252,34 @@ function createTaskInput(input: RunFullInput): Partial<TaskUserInputs> & {
   };
 }
 
+async function emitStep(input: RunFullInput, update: RunFullStepUpdate): Promise<void> {
+  if (input.onStepUpdate) {
+    await input.onStepUpdate(update);
+  }
+}
+
+async function runTrackedStep<T>(
+  input: RunFullInput,
+  name: string,
+  action: () => Promise<T>,
+  skipped = false
+): Promise<T | undefined> {
+  if (skipped) {
+    await emitStep(input, { name, status: "skipped", message: "Skipped by resume." });
+    return undefined;
+  }
+  await emitStep(input, { name, status: "running" });
+  try {
+    const result = await action();
+    await emitStep(input, { name, status: "success" });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await emitStep(input, { name, status: "failed", message });
+    throw error;
+  }
+}
+
 export async function runFullPipeline(input: RunFullInput): Promise<RunFullResult> {
   const provider = parseAssetProvider(input.provider ?? "mock");
   const sceneLimit = parsePositiveInteger(input.sceneLimit, 3);
@@ -311,52 +346,64 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
   }
 
   if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "analysis.json", resume, force })) {
-    await analyzeForTask(task.task_id);
+    await runTrackedStep(input, "analyze", () => analyzeForTask(task.task_id));
     steps.push("analyze");
   } else {
+    await runTrackedStep(input, "analyze", async () => undefined, true);
     steps.push("analyze-skipped");
   }
 
   if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "storyboard.json", resume, force })) {
-    await generateStoryboardForTask(task.task_id);
+    await runTrackedStep(input, "storyboard", () => generateStoryboardForTask(task.task_id));
     steps.push("storyboard");
   } else {
+    await runTrackedStep(input, "storyboard", async () => undefined, true);
     steps.push("storyboard-skipped");
   }
 
   if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "remake_plan.json", resume, force })) {
-    await generateRemakePlanForTask(task.task_id);
+    await runTrackedStep(input, "remake", () => generateRemakePlanForTask(task.task_id));
     steps.push("remake");
   } else {
+    await runTrackedStep(input, "remake", async () => undefined, true);
     steps.push("remake-skipped");
   }
 
   if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "video_prompts.json", resume, force })) {
-    await generateVideoPromptsForTask(task.task_id);
+    await runTrackedStep(input, "prompts", () => generateVideoPromptsForTask(task.task_id));
     steps.push("prompts");
   } else {
+    await runTrackedStep(input, "prompts", async () => undefined, true);
     steps.push("prompts-skipped");
   }
 
-  await generateAssetsForTask({
-    taskId: task.task_id,
-    provider,
-    sceneLimit,
-    force
-  });
+  await runTrackedStep(input, "generate-assets", () =>
+    generateAssetsForTask({
+      taskId: task.task_id,
+      provider,
+      sceneLimit,
+      force
+    })
+  );
   steps.push("generate-assets");
 
   if (runAssemble) {
-    await assembleVideoForTask(task.task_id);
+    await runTrackedStep(input, "assemble", () => assembleVideoForTask(task.task_id));
     steps.push("assemble");
+  } else {
+    await runTrackedStep(input, "assemble", async () => undefined, true);
   }
 
   let markdown: string | undefined;
   let json: string | undefined;
   if (runExport) {
-    markdown = await exportMarkdownForTask(task.task_id);
-    json = await exportJsonForTask(task.task_id);
+    await runTrackedStep(input, "export", async () => {
+      markdown = await exportMarkdownForTask(task.task_id);
+      json = await exportJsonForTask(task.task_id);
+    });
     steps.push("export");
+  } else {
+    await runTrackedStep(input, "export", async () => undefined, true);
   }
 
   const latestTask = await getTask(task.task_id);

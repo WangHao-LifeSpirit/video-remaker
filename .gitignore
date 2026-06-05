@@ -12,6 +12,7 @@ out/
 
 # Generated task data
 data/tasks/
+data/jobs/
 data/uploads/
 data/outputs/
 uploads/

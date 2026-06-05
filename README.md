@@ -1,8 +1,8 @@
 # Short Video Remaker
 
-短视频复刻自动化工作台 v0.7。
+短视频复刻自动化工作台 v1.0。
 
-这是一个本地运行的短视频原创改编工作台。用户输入短视频链接、上传自己有权限的视频，或手动补充文案/字幕/截图描述后，系统通过 Agent 流程拆解结构、生成原创改编方案、调用视频生成 provider 生成素材，并用 FFmpeg 合成 `final.mp4`。
+这是一个本地运行的网页端短视频原创改编工作台，不是公网 SaaS。用户输入短视频链接、上传自己有权限的视频，或手动补充文案/字幕/截图描述后，系统通过 Agent 流程拆解结构、生成原创改编方案、调用视频生成 provider 生成素材，并用 FFmpeg 合成 `final.mp4`。
 
 目标是“同款结构，原创内容”，不是下载、搬运、洗稿或复制原素材。
 
@@ -27,8 +27,16 @@
   - dry-run 预估
   - 一键生成
   - 成本保护提示
+  - 后台 job 执行
+  - 页面轮询进度
+  - 历史 jobs
+  - 防重复运行
+  - failed job 重试
   - 步骤状态
+  - `final.mp4` 页面内预览
   - 下载结果文件
+- 历史错误日志默认折叠展示。
+- 支持安全清理历史错误日志，并备份到任务目录。
 - CLI 支持逐步命令和 `run-full` 一键流程。
 
 ## 当前限制
@@ -40,8 +48,10 @@
 - TTS 配音尚未完成。
 - ASR 转写尚未完成。
 - 字幕烧录尚未完成，目前以外挂字幕/制作包为主。
-- 没有后台任务队列和实时进度流；网页请求会等待后端流程完成。
 - 没有多用户、登录、计费。
+- 本地任务依赖本机文件系统。
+- 当前后台 job 是本地 JSON 轻量实现，不是生产级分布式任务队列。
+- 暂无完整抖音链接自动解析。
 - Kling / Luma 不作为当前交付链路使用。
 - Seedance 真实生成受成本保护限制，默认不全量生成所有 scenes。
 
@@ -135,6 +145,31 @@ npm run dev -- -H 127.0.0.1 -p 3000
    - `final.mp4`
    - `production-package.md`
    - `project-package.json`
+
+## 网页预览 final.mp4
+
+任务详情页包含 `最终成片预览` 区域。
+
+如果当前任务已经生成：
+
+```text
+data/outputs/{task_id}/final.mp4
+```
+
+页面会显示一个 `<video controls>` 播放器，视频源来自安全接口：
+
+```text
+/api/tasks/{task_id}/video
+```
+
+这个预览接口只读取当前任务输出目录中的 `final.mp4`，不会读取任意路径，也不会触发 DeepSeek、Seedance、Kling、Luma 或任何付费 API 调用。
+
+如果播放器不显示，请检查：
+
+- 是否已经运行 `run-full`。
+- 是否已经执行 `assemble`。
+- `data/outputs/{task_id}/final.mp4` 是否存在。
+- 浏览器是否支持 MP4/H.264 播放。
 
 ## CLI 使用方式
 
@@ -243,6 +278,35 @@ npm run video-maker -- run-full --task <task_id> --provider seedance --scene-lim
 ```bash
 npm run video-maker -- run-full --task <task_id> --provider seedance --scene-limit 3 --assemble --export --force
 ```
+
+## 清理历史调试错误日志
+
+任务详情页顶部默认只展示最近一次后台 job 的状态和错误。`task.json` / `assets.json` 中的历史 `errors` 主要是调试日志，可能包含过去的 Kling、Luma、Seedance endpoint 或成本保护记录，不一定代表当前任务失败。
+
+如需清空历史错误日志：
+
+```bash
+npm run video-maker -- clear-errors --task <task_id>
+```
+
+清理会先备份到：
+
+```text
+data/tasks/{task_id}/backups/errors-backup-{timestamp}.json
+```
+
+该命令只清空：
+
+- `task.json.errors`
+- `assets.json.errors`
+
+不会删除：
+
+- `data/outputs/{task_id}/final.mp4`
+- `production-package.md`
+- `project-package.json`
+- `data/tasks/{task_id}/assets/videos/`
+- `data/jobs/` 中的后台 job 历史
 
 ## 控制成本
 

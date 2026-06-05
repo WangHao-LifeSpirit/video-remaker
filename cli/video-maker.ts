@@ -13,6 +13,7 @@ import { generateVideoPromptsForTask } from "../lib/tools/prompt-generator";
 import { generateAssetsForTask, generateMockAssetsForTask } from "../lib/tools/asset-generator";
 import { assembleVideoForTask } from "../lib/tools/video-assembler";
 import { normalizeBoolean, parseAssetProvider, parsePositiveInteger, runFullPipeline } from "../lib/tools/run-full";
+import { clearTaskErrors } from "../lib/tools/error-log";
 import { inspectKlingAuthConfig } from "../lib/api-clients/kling-client";
 import type { RemakeStrength } from "../lib/types/common";
 import type { TaskUserInputs } from "../lib/types/task";
@@ -256,6 +257,14 @@ program
   .requiredOption("--task <taskId>", "Task ID")
   .action(async (options) => {
     printJson(await getTask(options.task));
+  });
+
+program
+  .command("clear-errors")
+  .description("Back up and clear task.json/assets.json historical error logs without deleting outputs or videos")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await clearTaskErrors(options.task));
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

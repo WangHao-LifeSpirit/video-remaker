@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type RunFullResult = {
@@ -41,9 +41,48 @@ type TaskSummary = {
   };
 };
 
+type JobStep = {
+  name: string;
+  status: "pending" | "running" | "success" | "failed" | "skipped";
+  message?: string;
+  started_at?: string;
+  finished_at?: string;
+};
+
+type RunFullJob = {
+  job_id: string;
+  task_id: string;
+  status: "queued" | "running" | "success" | "failed";
+  current_step: string;
+  created_at?: string;
+  updated_at?: string;
+  steps: JobStep[];
+  error?: string;
+  reused?: boolean;
+  message?: string;
+  output_paths?: {
+    final_mp4?: string;
+    production_package?: string;
+    project_package?: string;
+  };
+};
+
+type JobHistoryItem = {
+  job_id: string;
+  task_id: string;
+  status: "queued" | "running" | "success" | "failed";
+  current_step: string;
+  created_at: string;
+  updated_at: string;
+  error?: string;
+  has_final_mp4: boolean;
+  possibly_stuck: boolean;
+  output_paths?: RunFullJob["output_paths"];
+};
+
 const visibleSteps = ["analyze", "storyboard", "remake", "prompts", "generate-assets", "assemble", "export"];
 
-function stepState(step: string, result?: RunFullResult): "pending" | "done" | "skipped" | "planned" {
+function dryRunStepState(step: string, result?: RunFullResult): "pending" | "done" | "skipped" | "planned" {
   if (!result) return "pending";
   const entries = result.steps ?? [];
   if (entries.some((entry) => entry === `${step}-skipped` || entry.includes(`${step} would be skipped`))) {
@@ -55,8 +94,17 @@ function stepState(step: string, result?: RunFullResult): "pending" | "done" | "
   return "pending";
 }
 
-function statusLabel(value: ReturnType<typeof stepState>) {
+function jobStepState(step: string, job?: RunFullJob): "pending" | "running" | "done" | "skipped" | "failed" {
+  const match = job?.steps.find((candidate) => candidate.name === step);
+  if (!match) return "pending";
+  if (match.status === "success") return "done";
+  return match.status;
+}
+
+function statusLabel(value: ReturnType<typeof dryRunStepState> | ReturnType<typeof jobStepState>) {
   if (value === "done") return "完成";
+  if (value === "running") return "运行中";
+  if (value === "failed") return "失败";
   if (value === "skipped") return "跳过";
   if (value === "planned") return "将执行";
   return "等待";
@@ -78,15 +126,106 @@ export function RunFullPanel({
   const [busy, setBusy] = useState<"idle" | "dry-run" | "run">("idle");
   const [error, setError] = useState("");
   const [result, setResult] = useState<RunFullResult | undefined>();
+  const [job, setJob] = useState<RunFullJob | undefined>();
+  const [jobHistory, setJobHistory] = useState<JobHistoryItem[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
 
   const outputs = useMemo(
     () => ({
-      final_mp4: result?.outputs?.final_mp4 ?? task.export_paths.mp4,
-      production_package_md: result?.outputs?.production_package_md ?? task.export_paths.markdown,
-      project_package_json: result?.outputs?.project_package_json ?? task.export_paths.json
+      final_mp4: job?.output_paths?.final_mp4 ?? result?.outputs?.final_mp4 ?? task.export_paths.mp4,
+      production_package_md: job?.output_paths?.production_package ?? result?.outputs?.production_package_md ?? task.export_paths.markdown,
+      project_package_json: job?.output_paths?.project_package ?? result?.outputs?.project_package_json ?? task.export_paths.json
     }),
-    [result, task.export_paths.json, task.export_paths.markdown, task.export_paths.mp4]
+    [job, result, task.export_paths.json, task.export_paths.markdown, task.export_paths.mp4]
   );
+
+  const activeJob = useMemo(
+    () => job ?? jobHistory.find((candidate) => candidate.status === "queued" || candidate.status === "running"),
+    [job, jobHistory]
+  );
+  const jobIsActive = !!activeJob && (activeJob.status === "queued" || activeJob.status === "running");
+
+  async function loadJobs() {
+    setJobsLoading(true);
+    try {
+      const response = await fetch(`/api/tasks/${task.task_id}/jobs`, { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error ?? "读取历史 job 失败");
+      }
+      const jobs = (payload.jobs ?? []) as JobHistoryItem[];
+      setJobHistory(jobs);
+      const runningJob = jobs.find((candidate) => candidate.status === "queued" || candidate.status === "running");
+      if (runningJob && (!job || job.job_id !== runningJob.job_id)) {
+        setJob({
+          job_id: runningJob.job_id,
+          task_id: runningJob.task_id,
+          status: runningJob.status,
+          current_step: runningJob.current_step,
+          created_at: runningJob.created_at,
+          updated_at: runningJob.updated_at,
+          steps: visibleSteps.map((name) => ({
+            name,
+            status: name === runningJob.current_step ? "running" : "pending"
+          })),
+          error: runningJob.error,
+          output_paths: runningJob.output_paths
+        });
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "读取历史 job 失败");
+    } finally {
+      setJobsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.task_id]);
+
+  useEffect(() => {
+    if (!job || !["queued", "running"].includes(job.status)) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/jobs/${job.job_id}`, { cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error ?? "读取 job 状态失败");
+        }
+        if (cancelled) return;
+        const nextJob = payload as RunFullJob;
+        setJob(nextJob);
+        if (nextJob.status === "success") {
+          setBusy("idle");
+          void loadJobs();
+          router.refresh();
+          window.clearInterval(interval);
+        }
+        if (nextJob.status === "failed") {
+          setBusy("idle");
+          setError(nextJob.error ?? "后台任务失败");
+          void loadJobs();
+          window.clearInterval(interval);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setBusy("idle");
+          setError(caught instanceof Error ? caught.message : "读取 job 状态失败");
+          window.clearInterval(interval);
+        }
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [job, router]);
 
   async function submit(dryRun: boolean) {
     setError("");
@@ -94,9 +233,14 @@ export function RunFullPanel({
       setError(`scene-limit 不能超过 ${runtime.max_video_scenes_per_run}`);
       return;
     }
+    if (!dryRun && jobIsActive) {
+      setJob(activeJob as RunFullJob);
+      setError("任务运行中，已继续跟踪当前 job。");
+      return;
+    }
     setBusy(dryRun ? "dry-run" : "run");
     try {
-      const response = await fetch(`/api/tasks/${task.task_id}/run-full`, {
+      const response = await fetch(dryRun ? `/api/tasks/${task.task_id}/run-full` : `/api/tasks/${task.task_id}/jobs/run-full`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -112,18 +256,31 @@ export function RunFullPanel({
       if (!response.ok) {
         throw new Error(payload.error ?? "运行失败");
       }
-      setResult(payload as RunFullResult);
-      if (!dryRun) {
-        router.refresh();
+      if (dryRun) {
+        setJob(undefined);
+        setResult(payload as RunFullResult);
+        setBusy("idle");
+      } else {
+        setResult(undefined);
+        const nextJob = payload as RunFullJob;
+        setJob(nextJob);
+        if (nextJob.reused) {
+          setError(nextJob.message ?? "任务运行中，已继续跟踪当前 job。");
+        }
+        void loadJobs();
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "运行失败");
-    } finally {
       setBusy("idle");
+    } finally {
+      if (dryRun) {
+        setBusy("idle");
+      }
     }
   }
 
   const paidDisabled = provider !== "mock" && !runtime.paid_api_calls;
+  const canRun = busy === "idle" && !jobIsActive;
 
   return (
     <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
@@ -132,6 +289,11 @@ export function RunFullPanel({
         <p className="text-sm text-neutral-600">
           当前 provider：{provider}；scene-limit：{sceneLimit}；付费 API：{runtime.paid_api_calls ? "已开启" : "已关闭"}
         </p>
+        {jobIsActive ? (
+          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+            任务运行中：{activeJob.job_id}；当前步骤：{activeJob.current_step}；最近更新：{activeJob.updated_at ?? "等待刷新"}
+          </p>
+        ) : null}
         {paidDisabled ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             真实视频生成被成本保护关闭，运行将 fallback mock 或 dry-run。
@@ -196,34 +358,44 @@ export function RunFullPanel({
         </button>
         <button
           type="button"
-          disabled={busy !== "idle"}
+          disabled={!canRun}
           onClick={() => submit(false)}
           className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white disabled:bg-neutral-500"
         >
-          {busy === "run" ? "生成中..." : "一键生成"}
+          {jobIsActive ? "任务运行中" : busy === "run" ? "生成中..." : "一键生成"}
         </button>
       </div>
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
+      {job ? (
+        <div className="grid gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
+          <p>Job：{job.job_id}；状态：{job.status}；当前步骤：{job.current_step}</p>
+          {job.updated_at ? <p>最近更新：{job.updated_at}</p> : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-2">
         <h3 className="text-sm font-semibold">步骤状态</h3>
         <div className="grid gap-2 md:grid-cols-2">
           {visibleSteps.map((step) => {
-            const state = stepState(step, result);
+            const state = job ? jobStepState(step, job) : dryRunStepState(step, result);
+            const stepMessage = job?.steps.find((candidate) => candidate.name === step)?.message;
             return (
-              <div key={step} className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm">
-                <span>{step}</span>
-                <span className="text-neutral-600">{statusLabel(state)}</span>
+              <div key={step} className="grid gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>{step}</span>
+                  <span className="text-neutral-600">{statusLabel(state)}</span>
+                </div>
+                {stepMessage ? <p className="text-xs text-red-600">{stepMessage}</p> : null}
               </div>
             );
           })}
         </div>
       </div>
 
-      {result ? (
+      {result || job ? (
         <pre className="max-h-56 overflow-auto rounded-md bg-neutral-950 p-3 text-xs leading-5 text-neutral-100">
-          {JSON.stringify(result, null, 2)}
+          {JSON.stringify(job ?? result, null, 2)}
         </pre>
       ) : null}
 
@@ -249,6 +421,57 @@ export function RunFullPanel({
             project-package.json
           </a>
         </div>
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">最近 Jobs</h3>
+          <button
+            type="button"
+            disabled={jobsLoading}
+            onClick={() => loadJobs()}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+          >
+            {jobsLoading ? "刷新中..." : "刷新"}
+          </button>
+        </div>
+        {jobHistory.length ? (
+          <div className="grid gap-2">
+            {jobHistory.slice(0, 8).map((item) => (
+              <div key={item.job_id} className="grid gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm">
+                <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                  <div className="grid gap-1">
+                    <p className="break-all font-medium">{item.job_id}</p>
+                    <p className="text-neutral-600">
+                      状态：{item.status}；当前步骤：{item.current_step}；final.mp4：{item.has_final_mp4 ? "有" : "无"}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      创建：{item.created_at}；更新：{item.updated_at}
+                    </p>
+                  </div>
+                  {item.status === "failed" ? (
+                    <button
+                      type="button"
+                      disabled={!canRun}
+                      onClick={() => submit(false)}
+                      className="h-9 rounded-md border border-neutral-300 bg-white px-3 text-sm font-medium disabled:opacity-60"
+                    >
+                      重新运行
+                    </button>
+                  ) : null}
+                </div>
+                {item.possibly_stuck ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                    这个 job 超过 30 分钟没有更新，可能已卡住。
+                  </p>
+                ) : null}
+                {item.error ? <p className="text-xs text-red-600">{item.error}</p> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-500">暂无后台 job 记录。</p>
+        )}
       </div>
     </section>
   );
