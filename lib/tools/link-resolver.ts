@@ -17,6 +17,8 @@ const officialDomains: Record<SupportedPlatform, string[]> = {
   xiaohongshu: ["xiaohongshu.com", "xhslink.com"],
   bilibili: ["bilibili.com", "b23.tv"],
   youtube: ["youtube.com", "youtu.be"],
+  instagram: ["instagram.com"],
+  tiktok: ["tiktok.com", "vt.tiktok.com"],
   unknown: []
 };
 

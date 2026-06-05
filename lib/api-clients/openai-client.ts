@@ -72,6 +72,10 @@ function getMode(): ClientMode {
   return process.env.MOCK_MODE === "false" ? "real" : "mock";
 }
 
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
 function missingConfigError(step: string, missing: string[]): ErrorRecord {
   return createErrorRecord({
     step,
@@ -140,7 +144,8 @@ export async function generateOpenAIStructuredJson<T>(
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const baseUrl = trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
+    const response = await fetch(`${baseUrl}/responses`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -239,4 +244,3 @@ export async function generateOpenAIText(prompt: string): Promise<{ mode: Client
   });
   return result.mode === "real" ? { mode: "real", text: result.data.text } : { mode: "mock", text: prompt };
 }
-

@@ -68,13 +68,19 @@ export async function GET(request: Request, { params }: { params: { taskId: stri
   try {
     await getTask(params.taskId);
     const outputDir = getTaskOutputsDir(params.taskId);
-    const filePath = path.join(outputDir, "final.mp4");
+    const subtitledPath = path.join(outputDir, "final_subtitled.mp4");
+    const originalPath = path.join(outputDir, "final.mp4");
+    let filePath = subtitledPath;
+    let fileStat = await stat(filePath).catch(() => undefined);
+    if (!fileStat?.isFile()) {
+      filePath = originalPath;
+      fileStat = await stat(filePath).catch(() => undefined);
+    }
     if (!filePath.startsWith(outputDir)) {
       return NextResponse.json({ error: "Invalid video path." }, { status: 400 });
     }
 
-    const fileStat = await stat(filePath);
-    if (!fileStat.isFile()) {
+    if (!fileStat?.isFile()) {
       return NextResponse.json({ error: "final.mp4 not found." }, { status: 404 });
     }
 

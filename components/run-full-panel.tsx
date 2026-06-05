@@ -24,6 +24,10 @@ type RunFullResult = {
 };
 
 type RuntimeStatus = {
+  mock_mode: boolean;
+  llm_provider: string;
+  tts_provider: string;
+  paid_tts_calls: boolean;
   video_provider: string;
   paid_api_calls: boolean;
   max_video_scenes_per_run: number;
@@ -112,10 +116,12 @@ function statusLabel(value: ReturnType<typeof dryRunStepState> | ReturnType<type
 
 export function RunFullPanel({
   task,
-  runtime
+  runtime,
+  showJobHistory = true
 }: {
   task: TaskSummary;
   runtime: RuntimeStatus;
+  showJobHistory?: boolean;
 }) {
   const router = useRouter();
   const [provider, setProvider] = useState(runtime.video_provider === "seedance" ? "seedance" : "seedance");
@@ -285,10 +291,16 @@ export function RunFullPanel({
   return (
     <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold">一键生成</h2>
+        <h2 className="text-base font-semibold">Step 3：视频生成与合成</h2>
+        <p className="text-sm text-neutral-600">确认 provider、scene-limit 和成本保护后，使用 dry-run 预估或启动后台一键生成。</p>
         <p className="text-sm text-neutral-600">
-          当前 provider：{provider}；scene-limit：{sceneLimit}；付费 API：{runtime.paid_api_calls ? "已开启" : "已关闭"}
+          当前 LLM Provider：{runtime.llm_provider}；当前 Video Provider：{provider}；scene-limit：{sceneLimit}；付费 API：{runtime.paid_api_calls ? "已开启" : "已关闭"}
         </p>
+        <div className="grid gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600">
+          <p>LLM Provider 影响分析、分镜、改编、prompt 和 review。</p>
+          <p>Video Provider 影响视频片段生成；mock 不消耗费用，seedance 是当前稳定交付链路。</p>
+          <p>实验性 provider：kling 已有部分 client 但未稳定验收；luma 预留配置，未作为稳定链路。</p>
+        </div>
         {jobIsActive ? (
           <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
             任务运行中：{activeJob.job_id}；当前步骤：{activeJob.current_step}；最近更新：{activeJob.updated_at ?? "等待刷新"}
@@ -423,6 +435,7 @@ export function RunFullPanel({
         </div>
       </div>
 
+      {showJobHistory ? (
       <div className="grid gap-2">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold">最近 Jobs</h3>
@@ -473,6 +486,7 @@ export function RunFullPanel({
           <p className="text-sm text-neutral-500">暂无后台 job 记录。</p>
         )}
       </div>
+      ) : null}
     </section>
   );
 }

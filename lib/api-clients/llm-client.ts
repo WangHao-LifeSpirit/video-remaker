@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { generateOpenAIStructuredJson } from "./openai-client";
 import { generateDeepSeekStructuredJson } from "./deepseek-client";
+import { generateClaudeStructuredJson } from "./claude-client";
 import type { ErrorRecord } from "../types/common";
 import { createErrorRecord } from "../types/common";
 
 export type ClientMode = "mock" | "real";
-export type LlmProvider = "mock" | "openai" | "deepseek";
+export type LlmProvider = "mock" | "openai" | "deepseek" | "claude";
 
 export type JsonSchema = {
   type: "object";
@@ -78,9 +79,10 @@ export function getLlmMode(): ClientMode {
 }
 
 export function getLlmProvider(): LlmProvider {
-  const provider = (process.env.LLM_PROVIDER || "openai").toLowerCase();
+  const provider = (process.env.LLM_PROVIDER || "deepseek").toLowerCase();
   if (provider === "deepseek") return "deepseek";
   if (provider === "openai") return "openai";
+  if (provider === "claude") return "claude";
   if (provider === "mock") return "mock";
   return "mock";
 }
@@ -119,6 +121,8 @@ export async function generateLLMStructuredJson<T>(
       ? { ...result, provider: "openai" }
       : { ...result, provider: "mock" };
   }
+  if (provider === "claude") {
+    return generateClaudeStructuredJson(request);
+  }
   return unsupportedProviderResult(request.step, process.env.LLM_PROVIDER || provider);
 }
-

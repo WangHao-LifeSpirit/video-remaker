@@ -14,6 +14,8 @@ export type SupportedPlatform =
   | "xiaohongshu"
   | "bilibili"
   | "youtube"
+  | "instagram"
+  | "tiktok"
   | "unknown";
 
 export type SourceInputType = "url" | "upload" | "manual" | "mixed";

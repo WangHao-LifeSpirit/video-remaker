@@ -1,3 +1,5 @@
+import { BurnSubtitlesButton } from "./burn-subtitles-button";
+
 function formatBytes(value?: number): string {
   if (!value || value <= 0) {
     return "未知";
@@ -15,20 +17,34 @@ function formatBytes(value?: number): string {
 export function VideoPreview({
   taskId,
   exists,
-  size
+  size,
+  version,
+  hasOriginal,
+  hasSubtitled,
+  subtitledSize
 }: {
   taskId: string;
   exists: boolean;
   size?: number;
+  version: "original" | "subtitled" | "none";
+  hasOriginal: boolean;
+  hasSubtitled: boolean;
+  subtitledSize?: number;
 }) {
   return (
     <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold">最终成片预览</h2>
+        <h2 className="text-base font-semibold">Step 5：成片预览与导出</h2>
+        <p className="text-sm text-neutral-600">这里直接预览最终 MP4，并下载原始版、带字幕版和制作包。</p>
         <p className="text-sm text-neutral-600">
-          final.mp4：{exists ? "已生成" : "尚未生成"}；文件大小：{exists ? formatBytes(size) : "无"}
+          当前预览版本：{version === "subtitled" ? "带字幕版" : version === "original" ? "原始版" : "无"}；文件大小：{exists ? formatBytes(size) : "无"}
+        </p>
+        <p className="text-sm text-neutral-500">
+          final.mp4：{hasOriginal ? "已生成" : "尚未生成"}；final_subtitled.mp4：{hasSubtitled ? `已生成（${formatBytes(subtitledSize)}）` : "尚未生成"}
         </p>
       </div>
+
+      <BurnSubtitlesButton taskId={taskId} />
 
       {exists ? (
         <>
@@ -47,8 +63,16 @@ export function VideoPreview({
             >
               下载 final.mp4
             </a>
+            {hasSubtitled ? (
+              <a
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium"
+                href={`/api/tasks/${taskId}/download?file=final_subtitled.mp4`}
+              >
+                下载 final_subtitled.mp4
+              </a>
+            ) : null}
           </div>
-          <p className="text-sm text-neutral-500">如需更新成片，请在上方一键生成区域重新运行；本预览不会自动触发生成。</p>
+          <p className="text-sm text-neutral-500">如需更新成片，请在上方一键生成区域重新运行；本预览不会自动触发生成。若存在带字幕版，播放器会优先预览 final_subtitled.mp4。</p>
         </>
       ) : (
         <p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600">

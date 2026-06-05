@@ -1,18 +1,44 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { getTaskOutputsDir } from "../../../../../lib/tools/task-store";
+import { getTaskDir, getTaskOutputsDir } from "../../../../../lib/tools/task-store";
 
 const allowedFiles = {
   "final.mp4": "video/mp4",
+  "final_subtitled.mp4": "video/mp4",
+  "cover.jpg": "image/jpeg",
+  "outputs_manifest.json": "application/json; charset=utf-8",
   "production-package.md": "text/markdown; charset=utf-8",
-  "project-package.json": "application/json; charset=utf-8"
+  "project-package.json": "application/json; charset=utf-8",
+  "subtitles.srt": "application/x-subrip; charset=utf-8"
 } as const;
 
 type AllowedFile = keyof typeof allowedFiles;
 
 function isAllowedFile(value: string | null): value is AllowedFile {
-  return value === "final.mp4" || value === "production-package.md" || value === "project-package.json";
+  return value === "final.mp4"
+    || value === "final_subtitled.mp4"
+    || value === "cover.jpg"
+    || value === "outputs_manifest.json"
+    || value === "production-package.md"
+    || value === "project-package.json"
+    || value === "subtitles.srt";
+}
+
+function resolveAllowedDownload(taskId: string, file: AllowedFile): { baseDir: string; filePath: string } {
+  if (file === "subtitles.srt") {
+    const baseDir = path.join(getTaskDir(taskId), "assets", "subtitles");
+    return {
+      baseDir,
+      filePath: path.join(baseDir, "subtitles.srt")
+    };
+  }
+
+  const baseDir = getTaskOutputsDir(taskId);
+  return {
+    baseDir,
+    filePath: path.join(baseDir, file)
+  };
 }
 
 export async function GET(request: Request, { params }: { params: { taskId: string } }) {
@@ -23,9 +49,8 @@ export async function GET(request: Request, { params }: { params: { taskId: stri
       return NextResponse.json({ error: "Unsupported download file." }, { status: 400 });
     }
 
-    const outputDir = getTaskOutputsDir(params.taskId);
-    const filePath = path.join(outputDir, file);
-    if (!filePath.startsWith(outputDir)) {
+    const { baseDir, filePath } = resolveAllowedDownload(params.taskId, file);
+    if (!filePath.startsWith(baseDir)) {
       return NextResponse.json({ error: "Invalid download path." }, { status: 400 });
     }
 

@@ -34,6 +34,13 @@ export type TaskFiles = {
   storyboard_json?: string;
   remake_plan_json?: string;
   video_prompts_json?: string;
+  review_report_json?: string;
+  voiceover_script_json?: string;
+  subtitles_json?: string;
+  source_link_json?: string;
+  source_video_json?: string;
+  source_frames_json?: string;
+  outputs_manifest_json?: string;
   assets_json?: string;
 };
 
@@ -41,6 +48,9 @@ export type TaskExportPaths = {
   markdown?: string;
   json?: string;
   mp4?: string;
+  subtitled_mp4?: string;
+  cover?: string;
+  manifest?: string;
 };
 
 export type VideoRemakeTask = {

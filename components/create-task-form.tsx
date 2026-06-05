@@ -116,7 +116,7 @@ export function CreateTaskForm() {
         disabled={state === "submitting"}
         className="h-11 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white disabled:bg-neutral-500"
       >
-        {state === "submitting" ? "正在创建..." : "创建并运行 v0.1 mock 流程"}
+        {state === "submitting" ? "正在创建..." : "创建任务"}
       </button>
     </form>
   );

@@ -9,11 +9,18 @@ import { generateAssetsForTask } from "./asset-generator";
 import { assembleVideoForTask } from "./video-assembler";
 import { analyzeForTask } from "./video-analyzer";
 import { generateVideoPromptsForTask } from "./prompt-generator";
+import { reviewTask } from "./review";
+import { generateVoiceoverForTask } from "./voiceover-generator";
+import { generateSubtitlesForTask } from "./subtitle-generator";
+import { generateMockAudioForTask } from "./audio-generator";
 import { createTask, getTask, getTaskDir, resolveProjectPath } from "./task-store";
 import { ingestForTask } from "./video-ingest";
 import { resolveLinkForTask } from "./link-resolver";
 
-export type AssetProvider = "mock" | "kling" | "luma" | "seedance";
+export type VideoProvider = "mock" | "seedance" | "kling" | "luma";
+export type StableVideoProvider = "mock" | "seedance";
+export type ExperimentalVideoProvider = "kling" | "luma";
+export type AssetProvider = VideoProvider;
 
 export type RunFullInput = Partial<TaskUserInputs> & {
   taskId?: string;
@@ -25,6 +32,9 @@ export type RunFullInput = Partial<TaskUserInputs> & {
   export?: boolean;
   force?: boolean;
   resume?: boolean;
+  review?: boolean;
+  reviewApply?: boolean;
+  prepareAudio?: boolean;
   dryRun?: boolean;
   onStepUpdate?: (update: RunFullStepUpdate) => void | Promise<void>;
 };
@@ -113,6 +123,10 @@ async function shouldRunArtifactStep(input: {
 }
 
 export async function getRunFullRuntimeStatus(): Promise<{
+  mock_mode: boolean;
+  llm_provider: string;
+  tts_provider: string;
+  paid_tts_calls: boolean;
   video_provider: string;
   paid_api_calls: boolean;
   max_video_scenes_per_run: number;
@@ -120,6 +134,10 @@ export async function getRunFullRuntimeStatus(): Promise<{
 }> {
   await loadDotEnvOnce();
   return {
+    mock_mode: process.env.MOCK_MODE !== "false",
+    llm_provider: process.env.LLM_PROVIDER ?? "deepseek",
+    tts_provider: process.env.TTS_PROVIDER ?? "mock",
+    paid_tts_calls: process.env.ENABLE_PAID_TTS_CALLS === "true",
     video_provider: process.env.VIDEO_PROVIDER ?? "mock",
     paid_api_calls: process.env.ENABLE_PAID_API_CALLS === "true",
     max_video_scenes_per_run: parsePositiveInteger(process.env.MAX_VIDEO_SCENES_PER_RUN, 3),
@@ -162,6 +180,9 @@ async function buildRunFullDryRun(input: {
   force: boolean;
   runAssemble: boolean;
   runExport: boolean;
+  runReview: boolean;
+  reviewApply: boolean;
+  prepareAudio: boolean;
   paidApiCalls: boolean;
   maxScenes: number;
 }): Promise<RunFullResult> {
@@ -191,8 +212,14 @@ async function buildRunFullDryRun(input: {
         "storyboard",
         "remake",
         "prompts",
+        input.runReview
+          ? input.reviewApply
+            ? "review and apply prompt suggestions"
+            : "review"
+          : "review skipped by option",
+        input.prepareAudio ? "voiceover, subtitles, and mock audio" : "prepare-audio skipped by option",
         `generate-assets (${input.provider}, scene-limit=${input.sceneLimit})`,
-        input.runAssemble ? "assemble" : "assemble skipped by option",
+        input.runAssemble || input.prepareAudio ? "assemble" : "assemble skipped by option",
         input.runExport ? "export" : "export skipped by option"
       ]
     };
@@ -224,11 +251,19 @@ async function buildRunFullDryRun(input: {
       (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "remake_plan.json", resume: input.resume, force: input.force }))
         ? "remake would run"
         : "remake would be skipped",
-      (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "video_prompts.json", resume: input.resume, force: input.force }))
+        (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "video_prompts.json", resume: input.resume, force: input.force }))
         ? "prompts would run"
         : "prompts would be skipped",
+      input.runReview
+        ? input.reviewApply
+          ? "review would run and apply prompt suggestions before asset generation"
+          : "review would run before asset generation"
+        : "review skipped by option",
+      input.prepareAudio
+        ? "voiceover, subtitles, and mock audio would run before assembly"
+        : "prepare-audio skipped by option",
       `generate-assets would run with provider=${input.provider}, scene-limit=${input.sceneLimit}; existing successful Seedance scenes are reused unless force is enabled`,
-      input.runAssemble ? "assemble would run" : "assemble skipped by option",
+      input.runAssemble || input.prepareAudio ? "assemble would run" : "assemble skipped by option",
       input.runExport ? "export would run" : "export skipped by option"
     ]
   };
@@ -285,8 +320,11 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
   const sceneLimit = parsePositiveInteger(input.sceneLimit, 3);
   const resume = input.resume ?? true;
   const force = input.force ?? false;
-  const runAssemble = input.assemble ?? false;
+  const runPrepareAudio = Boolean(input.prepareAudio);
+  const runAssemble = (input.assemble ?? false) || runPrepareAudio;
   const runExport = input.export ?? false;
+  const runReview = Boolean(input.review || input.reviewApply);
+  const reviewApply = Boolean(input.reviewApply);
   const runtime = await getRunFullRuntimeStatus();
 
   if (sceneLimit > runtime.max_video_scenes_per_run) {
@@ -303,6 +341,9 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
       force,
       runAssemble,
       runExport,
+      runReview,
+      reviewApply,
+      prepareAudio: runPrepareAudio,
       paidApiCalls: runtime.paid_api_calls,
       maxScenes: runtime.max_video_scenes_per_run
     });
@@ -377,6 +418,21 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     steps.push("prompts-skipped");
   }
 
+  if (runReview) {
+    const reviewResult = await runTrackedStep(input, "review", () =>
+      reviewTask({
+        taskId: task.task_id,
+        apply: reviewApply
+      })
+    );
+    steps.push(reviewApply ? "review-apply" : "review");
+    if (reviewResult?.report.final_decision === "manual_review") {
+      throw new Error("Agent review requires manual review before generation.");
+    }
+  } else {
+    steps.push("review-skipped");
+  }
+
   await runTrackedStep(input, "generate-assets", () =>
     generateAssetsForTask({
       taskId: task.task_id,
@@ -386,6 +442,17 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     })
   );
   steps.push("generate-assets");
+
+  if (runPrepareAudio) {
+    await runTrackedStep(input, "voiceover", () => generateVoiceoverForTask(task.task_id));
+    steps.push("voiceover");
+    await runTrackedStep(input, "subtitles", () => generateSubtitlesForTask(task.task_id));
+    steps.push("subtitles");
+    await runTrackedStep(input, "audio", () => generateMockAudioForTask({ taskId: task.task_id, provider: "mock" }));
+    steps.push("audio");
+  } else {
+    steps.push("prepare-audio-skipped");
+  }
 
   if (runAssemble) {
     await runTrackedStep(input, "assemble", () => assembleVideoForTask(task.task_id));

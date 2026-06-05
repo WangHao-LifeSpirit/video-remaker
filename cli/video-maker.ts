@@ -7,6 +7,7 @@ import { exportJsonForTask } from "../lib/export/json-exporter";
 import { exportMarkdownForTask } from "../lib/export/markdown-exporter";
 import { createTask, getTask } from "../lib/tools/task-store";
 import { resolveLinkForTask } from "../lib/tools/link-resolver";
+import { parseSourceLinkForTask } from "../lib/tools/link-parser";
 import { ingestForTask } from "../lib/tools/video-ingest";
 import { analyzeForTask } from "../lib/tools/video-analyzer";
 import { generateVideoPromptsForTask } from "../lib/tools/prompt-generator";
@@ -14,6 +15,18 @@ import { generateAssetsForTask, generateMockAssetsForTask } from "../lib/tools/a
 import { assembleVideoForTask } from "../lib/tools/video-assembler";
 import { normalizeBoolean, parseAssetProvider, parsePositiveInteger, runFullPipeline } from "../lib/tools/run-full";
 import { clearTaskErrors } from "../lib/tools/error-log";
+import { reviewTask } from "../lib/tools/review";
+import { checkRuntimeConfig } from "../lib/tools/config-check";
+import { generateVoiceoverForTask } from "../lib/tools/voiceover-generator";
+import { generateSubtitlesForTask } from "../lib/tools/subtitle-generator";
+import { generateAudioForTask, generateMockAudioForTask } from "../lib/tools/audio-generator";
+import { burnSubtitlesForTask } from "../lib/tools/subtitle-burner";
+import { analyzeSourceVideoForTask } from "../lib/tools/source-video-analyzer";
+import { extractFramesForTask } from "../lib/tools/frame-extractor";
+import { exportCoverForTask } from "../lib/tools/cover-exporter";
+import { generateOutputsManifestForTask } from "../lib/tools/output-manifest";
+import { saveSourceNotesForTask } from "../lib/tools/source-input";
+import { inspectTtsConfig, parseTtsProvider } from "../lib/api-clients/tts-client";
 import { inspectKlingAuthConfig } from "../lib/api-clients/kling-client";
 import type { RemakeStrength } from "../lib/types/common";
 import type { TaskUserInputs } from "../lib/types/task";
@@ -72,7 +85,7 @@ function commonTaskOptions(command: Command, useDefaults: boolean): Command {
 program
   .name("video-maker")
   .description("Short-video original-remake automation CLI")
-  .version("0.1.0");
+  .version("2.0.0");
 
 commonTaskOptions(
   program
@@ -98,6 +111,15 @@ program
   .action(async (options) => {
     const result = await resolveLinkForTask(options.task, options.url);
     printJson(result);
+  });
+
+program
+  .command("parse-link")
+  .description("Identify a source short-video link safely without downloading or bypassing platform limits")
+  .requiredOption("--task <taskId>", "Task ID")
+  .requiredOption("--url <url>", "Source URL or noisy share text")
+  .action(async (options) => {
+    printJson(await parseSourceLinkForTask(options.task, options.url));
   });
 
 commonTaskOptions(
@@ -181,6 +203,125 @@ program
   });
 
 program
+  .command("config-check")
+  .description("Print local LLM/video provider config status without showing keys or calling APIs")
+  .action(async () => {
+    printJson(await checkRuntimeConfig());
+  });
+
+program
+  .command("tts-check")
+  .description("Print local TTS provider config status without showing keys or calling APIs")
+  .action(async () => {
+    printJson(await inspectTtsConfig());
+  });
+
+program
+  .command("review")
+  .description("Run local Agent review cycle for storyboard/remake/video prompts without video generation")
+  .requiredOption("--task <taskId>", "Task ID")
+  .option("--apply", "Apply prompt suggestions to video_prompts.json after backing up the original file", false)
+  .action(async (options) => {
+    printJson(await reviewTask({
+      taskId: options.task,
+      apply: normalizeBoolean(options.apply, false)
+    }));
+  });
+
+program
+  .command("voiceover")
+  .description("Generate local-rule voiceover_script.json without calling an LLM or TTS API")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await generateVoiceoverForTask(options.task));
+  });
+
+program
+  .command("subtitles")
+  .description("Generate subtitles.json and assets/subtitles/subtitles.srt from voiceover_script.json")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await generateSubtitlesForTask(options.task));
+  });
+
+program
+  .command("audio")
+  .description("Generate task audio with mock fallback. Volcengine is guarded by ENABLE_PAID_TTS_CALLS.")
+  .requiredOption("--task <taskId>", "Task ID")
+  .option("--provider <provider>", "mock | volcengine | openai | elevenlabs", "mock")
+  .action(async (options) => {
+    printJson(await generateAudioForTask({
+      taskId: options.task,
+      provider: parseTtsProvider(options.provider)
+    }));
+  });
+
+program
+  .command("prepare-audio")
+  .description("Run voiceover, subtitles, and mock audio generation")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    const voiceover = await generateVoiceoverForTask(options.task);
+    const subtitles = await generateSubtitlesForTask(options.task);
+    const assets = await generateMockAudioForTask({ taskId: options.task, provider: "mock" });
+    printJson({ voiceover, subtitles, assets });
+  });
+
+program
+  .command("analyze-source")
+  .description("Read uploaded source video metadata with ffprobe")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await analyzeSourceVideoForTask(options.task));
+  });
+
+program
+  .command("extract-frames")
+  .description("Extract key frames from the uploaded source video")
+  .requiredOption("--task <taskId>", "Task ID")
+  .option("--max <count>", "Maximum frames to extract, capped at 8", "8")
+  .action(async (options) => {
+    printJson(await extractFramesForTask({
+      taskId: options.task,
+      maxFrames: parsePositiveInteger(options.max, 8)
+    }));
+  });
+
+program
+  .command("source-notes")
+  .description("Save source transcript, caption, screenshot notes, and remake requirements into input.json")
+  .requiredOption("--task <taskId>", "Task ID")
+  .option("--source-transcript <text>", "Source transcript")
+  .option("--source-caption <text>", "Source caption or copy")
+  .option("--screenshot-notes <text>", "Visual notes")
+  .option("--remake-requirements <text>", "Remake requirements")
+  .action(async (options) => {
+    printJson(await saveSourceNotesForTask({
+      taskId: options.task,
+      source_transcript: options.sourceTranscript,
+      source_caption: options.sourceCaption,
+      screenshot_notes: options.screenshotNotes,
+      remake_requirements: options.remakeRequirements
+    }));
+  });
+
+program
+  .command("export-cover")
+  .description("Export cover.jpg from final_subtitled.mp4 or final.mp4")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await exportCoverForTask(options.task));
+  });
+
+program
+  .command("outputs-manifest")
+  .description("Generate outputs_manifest.json for final assets")
+  .requiredOption("--task <taskId>", "Task ID")
+  .action(async (options) => {
+    printJson(await generateOutputsManifestForTask(options.task));
+  });
+
+program
   .command("export")
   .description("Export Markdown production package and JSON project package")
   .requiredOption("--task <taskId>", "Task ID")
@@ -196,6 +337,20 @@ program
   .requiredOption("--task <taskId>", "Task ID")
   .action(async (options) => {
     printJson(await assembleVideoForTask(options.task));
+  });
+
+program
+  .command("burn-subtitles")
+  .description("Burn subtitles.srt into final.mp4 and write final_subtitled.mp4 without overwriting the original")
+  .requiredOption("--task <taskId>", "Task ID")
+  .option("--input <file>", "Input MP4 inside data/outputs/<task_id>", "final.mp4")
+  .option("--output <file>", "Output MP4 inside data/outputs/<task_id>", "final_subtitled.mp4")
+  .action(async (options) => {
+    printJson(await burnSubtitlesForTask({
+      taskId: options.task,
+      input: options.input,
+      output: options.output
+    }));
   });
 
 commonTaskOptions(
@@ -231,6 +386,9 @@ commonTaskOptions(
     .option("--export", "Export Markdown and JSON packages after assembly", false)
     .option("--force", "Rerun completed steps and regenerate provider assets", false)
     .option("--resume <boolean>", "Skip completed artifacts when true", "true")
+    .option("--review", "Run Agent review after prompt generation", false)
+    .option("--review-apply", "Apply review prompt suggestions before asset generation", false)
+    .option("--prepare-audio", "Generate voiceover_script.json, subtitles.json, SRT, and mock audio before assembly", false)
     .option("--dry-run", "Preview steps without creating tasks, writing files, or calling provider APIs", false),
   false
 ).action(async (options) => {
@@ -246,6 +404,9 @@ commonTaskOptions(
       export: normalizeBoolean(options.export, false),
       force: normalizeBoolean(options.force, false),
       resume: normalizeBoolean(options.resume, true),
+      review: normalizeBoolean(options.review, false),
+      reviewApply: normalizeBoolean(options.reviewApply, false),
+      prepareAudio: normalizeBoolean(options.prepareAudio, false),
       dryRun: normalizeBoolean(options.dryRun, false)
     })
   );
