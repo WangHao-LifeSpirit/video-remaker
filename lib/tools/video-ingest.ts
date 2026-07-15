@@ -5,6 +5,7 @@ import type { VideoInputArtifact, InputMaterial } from "../types/input";
 import type { TaskUserInputs } from "../types/task";
 import {
   getTask,
+  readTaskArtifact,
   resolveProjectPath,
   saveTask,
   setTaskStatus,
@@ -31,15 +32,23 @@ async function checkUpload(upload?: string): Promise<{ status: StepStatus; path?
 
 export async function ingestForTask(taskId: string, input: IngestInput = {}): Promise<VideoInputArtifact> {
   const task = await getTask(taskId);
-  const uploadCheck = await checkUpload(input.upload);
+  const existing = await readTaskArtifact<VideoInputArtifact>(taskId, "input.json").catch(() => undefined);
+  const effectiveUpload = input.upload
+    ?? existing?.uploaded_video?.uploaded_video_path
+    ?? existing?.source.upload_path
+    ?? task.source.upload_path;
+  const uploadCheck = await checkUpload(effectiveUpload);
   const mergedInputs: TaskUserInputs = {
     ...task.user_inputs,
     ...pickUserInputs(input),
-    text_notes: input.text_notes ?? task.user_inputs.text_notes ?? "",
-    transcript: input.transcript ?? task.user_inputs.transcript ?? "",
-    screenshot_notes: input.screenshot_notes ?? task.user_inputs.screenshot_notes ?? ""
+    text_notes: input.text_notes ?? existing?.source_caption ?? task.user_inputs.text_notes ?? "",
+    transcript: input.transcript ?? existing?.source_transcript ?? task.user_inputs.transcript ?? "",
+    screenshot_notes: input.screenshot_notes ?? existing?.screenshot_notes ?? task.user_inputs.screenshot_notes ?? ""
   };
 
+  const sourceTranscript = input.transcript ?? existing?.source_transcript ?? mergedInputs.transcript ?? "";
+  const sourceCaption = input.text_notes ?? existing?.source_caption ?? mergedInputs.text_notes ?? "";
+  const screenshotNotes = input.screenshot_notes ?? existing?.screenshot_notes ?? mergedInputs.screenshot_notes ?? "";
   const materials: InputMaterial[] = [
     {
       type: "url",
@@ -55,20 +64,35 @@ export async function ingestForTask(taskId: string, input: IngestInput = {}): Pr
     },
     {
       type: "text_notes",
-      status: mergedInputs.text_notes ? "success" : "pending",
-      value: mergedInputs.text_notes
+      status: sourceCaption ? "success" : "pending",
+      value: sourceCaption
     },
     {
       type: "transcript",
-      status: mergedInputs.transcript ? "success" : "pending",
-      value: mergedInputs.transcript
+      status: sourceTranscript ? "success" : "pending",
+      value: sourceTranscript
     },
     {
       type: "screenshot_notes",
-      status: mergedInputs.screenshot_notes ? "success" : "pending",
-      value: mergedInputs.screenshot_notes
+      status: screenshotNotes ? "success" : "pending",
+      value: screenshotNotes
+    },
+    {
+      type: "source_caption",
+      status: sourceCaption ? "success" : "pending",
+      value: sourceCaption
+    },
+    {
+      type: "remake_requirements",
+      status: existing?.remake_requirements ? "success" : "pending",
+      value: existing?.remake_requirements ?? ""
     }
   ];
+  for (const material of existing?.materials ?? []) {
+    if (!materials.some((candidate) => candidate.type === material.type)) {
+      materials.push(material);
+    }
+  }
 
   const availableMaterials = materials.filter((material) => material.status === "success" && material.value).map((material) => material.type);
   const missingMaterials = materials.filter((material) => material.status !== "success").map((material) => material.type);
@@ -93,6 +117,12 @@ export async function ingestForTask(taskId: string, input: IngestInput = {}): Pr
       upload_path: uploadCheck.path ?? task.source.upload_path
     },
     user_inputs: mergedInputs,
+    source_link: existing?.source_link,
+    uploaded_video: existing?.uploaded_video,
+    source_transcript: sourceTranscript,
+    source_caption: sourceCaption,
+    screenshot_notes: screenshotNotes,
+    remake_requirements: existing?.remake_requirements ?? "",
     materials,
     available_materials: availableMaterials,
     missing_materials: missingMaterials,

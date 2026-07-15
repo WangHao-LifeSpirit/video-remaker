@@ -29,6 +29,26 @@ export type VideoAnalysis = {
     subtitle_density: string;
     visual_density: string;
   };
+  /**
+   * Concrete visual observations of the source video. Populated when the
+   * analyze step can actually see source frames (vision model). May be absent
+   * on older artifacts or text-only/mock fallbacks.
+   */
+  visual_style?: {
+    shot_types: string;
+    composition: string;
+    color_tone: string;
+    lighting: string;
+    camera_movement: string;
+    text_overlay_style: string;
+    subject: string;
+  };
+  /** Per-frame / per-segment visual breakdown observed from source frames. */
+  shot_breakdown?: Array<{
+    timestamp: string;
+    what_is_shown: string;
+    shot_type: string;
+  }>;
   risk_notes: string[];
   errors: ErrorRecord[];
 };

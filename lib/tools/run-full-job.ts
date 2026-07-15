@@ -1,6 +1,6 @@
 import type { AssetProvider } from "./run-full";
-import { runFullPipeline } from "./run-full";
-import { createRunFullJob, markJobFailed, markJobRunning, markJobSuccess, updateJobStep } from "./job-store";
+import { orchestrateTask } from "../agents/orchestrator";
+import { createOrReuseRunFullJob, markJobFailed, markJobRunning, markJobSuccess, updateJobStep } from "./job-store";
 
 export type StartRunFullJobInput = {
   taskId: string;
@@ -15,7 +15,7 @@ export type StartRunFullJobInput = {
 async function executeRunFullJob(jobId: string, input: StartRunFullJobInput): Promise<void> {
   await markJobRunning(jobId);
   try {
-    const result = await runFullPipeline({
+    const result = await orchestrateTask({
       taskId: input.taskId,
       provider: input.provider,
       sceneLimit: input.sceneLimit,
@@ -45,7 +45,9 @@ async function executeRunFullJob(jobId: string, input: StartRunFullJobInput): Pr
 }
 
 export async function startRunFullJob(input: StartRunFullJobInput) {
-  const job = await createRunFullJob(input.taskId);
-  void executeRunFullJob(job.job_id, input);
-  return job;
+  const result = await createOrReuseRunFullJob(input.taskId);
+  if (!result.reused) {
+    void executeRunFullJob(result.job.job_id, input);
+  }
+  return result;
 }

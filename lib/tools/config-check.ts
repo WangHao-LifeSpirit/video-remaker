@@ -30,7 +30,6 @@ export type ConfigCheckResult = {
     };
     seedance: VideoProviderStatus;
     kling: VideoProviderStatus;
-    luma: VideoProviderStatus;
   };
   paid_api_calls: boolean;
   tts: TtsConfigStatus;
@@ -50,8 +49,13 @@ type VideoProviderStatus = {
   key_present: boolean;
   secret_present?: boolean;
   base_url_present: boolean;
+  base_url?: string;
+  mode?: string;
   model_present: boolean;
   endpoint_present?: boolean;
+  endpoint_path?: string;
+  text2video_endpoint_path?: string;
+  image2video_endpoint_path?: string;
   resolution_present?: boolean;
   stable: boolean;
   notes: string[];
@@ -152,17 +156,19 @@ function videoProviders(): ConfigCheckResult["video_providers"] {
       key_present: hasValue(process.env.KLING_ACCESS_KEY),
       secret_present: hasValue(process.env.KLING_SECRET_KEY),
       base_url_present: hasValue(process.env.KLING_API_BASE_URL),
+      base_url: process.env.KLING_API_BASE_URL?.trim() || "",
+      mode: process.env.KLING_MODE?.trim() || "",
       model_present: hasValue(process.env.KLING_MODEL_NAME),
       endpoint_present: hasValue(process.env.KLING_ENDPOINT_PATH),
+      endpoint_path: process.env.KLING_ENDPOINT_PATH?.trim() || "",
+      text2video_endpoint_path: process.env.KLING_TEXT2VIDEO_ENDPOINT_PATH?.trim() || "",
+      image2video_endpoint_path: process.env.KLING_IMAGE2VIDEO_ENDPOINT_PATH?.trim() || "",
       stable: false,
-      notes: ["Experimental provider. Client exists, but it is not part of the stable v1.x delivery path."]
-    },
-    luma: {
-      key_present: hasValue(process.env.LUMA_API_KEY),
-      base_url_present: hasValue(process.env.LUMA_API_BASE_URL),
-      model_present: hasValue(process.env.LUMA_MODEL),
-      stable: false,
-      notes: ["Experimental provider. Configuration is reserved and not exposed as a stable page option."]
+      notes: [
+        "Experimental provider. Domestic API should use KLING_API_BASE_URL=https://api.klingai.com.",
+        "Omni is preferred via KLING_MODE=omni and KLING_ENDPOINT_PATH=/v1/videos/omni-video.",
+        "No network request is made by config-check."
+      ]
     }
   };
 }
@@ -172,7 +178,7 @@ export async function checkRuntimeConfig(): Promise<ConfigCheckResult> {
   const rawLlmProvider = (process.env.LLM_PROVIDER || getLlmProvider()).toLowerCase();
   const supportedLlmProviders = ["mock", "deepseek", "openai", "claude"];
   const videoProvider = process.env.VIDEO_PROVIDER || "mock";
-  const supportedVideoProviders = ["mock", "seedance", "kling", "luma"];
+  const supportedVideoProviders = ["mock", "seedance", "kling"];
   const tts = await inspectTtsConfig();
 
   return {

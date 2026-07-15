@@ -64,10 +64,11 @@ function streamResponse(filePath: string, input: { start?: number; end?: number;
   });
 }
 
-export async function GET(request: Request, { params }: { params: { taskId: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
-    await getTask(params.taskId);
-    const outputDir = getTaskOutputsDir(params.taskId);
+    await getTask(taskId);
+    const outputDir = getTaskOutputsDir(taskId);
     const subtitledPath = path.join(outputDir, "final_subtitled.mp4");
     const originalPath = path.join(outputDir, "final.mp4");
     let filePath = subtitledPath;

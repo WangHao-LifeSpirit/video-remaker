@@ -57,7 +57,7 @@ export function createErrorRecord(input: {
 export function mockMeta(realProviderReserved?: string): MockMeta {
   return {
     is_mock: true,
-    mock_reason: "v0.1 uses deterministic mock outputs and does not call paid or external generation APIs.",
+    mock_reason: "Deterministic mock output was used; no paid or external generation API was called.",
     real_provider_reserved: realProviderReserved
   };
 }

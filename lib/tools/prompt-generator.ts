@@ -1,3 +1,4 @@
+import type { VideoAnalysis } from "../types/analysis";
 import type { RemakePlan } from "../types/remake-plan";
 import type { VideoPrompts } from "../types/video-prompts";
 import { fallbackMockMeta, mockMeta, realMeta } from "../types/common";
@@ -13,12 +14,16 @@ function buildMockVideoPrompts(input: {
   taskId: string;
   task: Awaited<ReturnType<typeof getTask>>;
   remakePlan: RemakePlan;
+  visualStyle?: VideoAnalysis["visual_style"];
   fallbackReason?: string;
   errors?: VideoPrompts["errors"];
 }): VideoPrompts {
-  const { task, remakePlan } = input;
+  const { task, remakePlan, visualStyle } = input;
+  const styleSuffix = visualStyle
+    ? ` Match source visual style — shots: ${visualStyle.shot_types}; composition: ${visualStyle.composition}; color: ${visualStyle.color_tone}; lighting: ${visualStyle.lighting}; camera: ${visualStyle.camera_movement}.`
+    : "";
   const prompts = remakePlan.new_storyboard.flatMap((scene) => {
-    const basePrompt = `${scene.visual}. Action: ${scene.action}. Narration mood: ${scene.narration}. Style: ${task.user_inputs.style}. Original material must not be copied.`;
+    const basePrompt = `${scene.visual}. Action: ${scene.action}. Narration mood: ${scene.narration}. Style: ${task.user_inputs.style}.${styleSuffix} Original material must not be copied.`;
     return [
       {
         scene_id: scene.scene_id,
@@ -53,18 +58,28 @@ function buildMockVideoPrompts(input: {
       : mockMeta("Kling / Seedance video generation APIs"),
     prompts,
     global_style: {
-      visual_style: task.user_inputs.style,
-      color_tone: "clean, high contrast, platform-native",
+      visual_style: visualStyle?.shot_types ? `${task.user_inputs.style}; ${visualStyle.shot_types}` : task.user_inputs.style,
+      color_tone: visualStyle?.color_tone || "clean, high contrast, platform-native",
       pacing: "fast opening, clear mid-section, concise ending"
     },
     errors: input.errors ?? []
   };
 }
 
+async function readVisualStyle(taskId: string): Promise<VideoAnalysis["visual_style"]> {
+  try {
+    const analysis = await readTaskArtifact<VideoAnalysis>(taskId, "analysis.json");
+    return analysis.visual_style;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function generateVideoPromptsForTask(taskId: string): Promise<VideoPrompts> {
   const task = await getTask(taskId);
   const remakePlan = await readTaskArtifact<RemakePlan>(taskId, "remake_plan.json");
-  const prompt = buildVideoPromptsPrompt(task, remakePlan);
+  const visualStyle = await readVisualStyle(taskId);
+  const prompt = buildVideoPromptsPrompt(task, remakePlan, visualStyle);
   const result = await generateLLMStructuredJson({
     step: "prompts",
     schemaName: "video_prompts",
@@ -87,6 +102,7 @@ export async function generateVideoPromptsForTask(taskId: string): Promise<Video
         taskId,
         task,
         remakePlan,
+        visualStyle,
         fallbackReason: result.fallbackReason,
         errors
       });

@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AssetsManifest } from "../types/assets";
 import { createErrorRecord } from "../types/common";
@@ -18,12 +18,43 @@ import {
 } from "./task-store";
 import { fileExists, generateMockSceneVideo } from "./video-generator";
 
-function escapeConcatPath(filePath: string): string {
-  return filePath.replaceAll("'", "'\\''");
+// Target canvas for the assembled video. Matches the mock generator (720x1280)
+// and is a standard vertical 9:16 frame at 30fps.
+const TARGET_WIDTH = 720;
+const TARGET_HEIGHT = 1280;
+const TARGET_FPS = 30;
+
+/**
+ * Builds an ffmpeg filter_complex that normalizes every scene clip to the same
+ * resolution / SAR / fps / pixel format, then concatenates them. This is what
+ * lets real provider clips (e.g. Seedance 704x1248@24fps) and mock placeholder
+ * clips (720x1280@30fps) play back seamlessly in a single re-encoded output.
+ * Using "-c copy" across mismatched clips caused stretching, frozen frames and
+ * audio/video duration drift.
+ */
+function buildNormalizeConcatFilter(count: number): string {
+  const norm = `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,` +
+    `pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${TARGET_FPS},format=yuv420p`;
+  const labels: string[] = [];
+  const steps: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    steps.push(`[${index}:v]${norm}[v${index}]`);
+    labels.push(`[v${index}]`);
+  }
+  steps.push(`${labels.join("")}concat=n=${count}:v=1:a=0[outv]`);
+  return steps.join(";");
 }
 
 function findTimelineItem(assets: AssetsManifest, sceneId: string) {
   return assets.timeline.find((item) => item.scene_id === sceneId);
+}
+
+function hasMockSceneClips(assets: AssetsManifest): boolean {
+  return assets.assets.some(
+    (asset) =>
+      (asset.type === "mock_video" || asset.type === "placeholder") &&
+      (asset.provider === "mock" || asset.generation_status === "mocked")
+  );
 }
 
 async function ensureSceneVideos(taskId: string, assets: AssetsManifest): Promise<string[]> {
@@ -100,6 +131,16 @@ async function selectSubtitleTrack(taskId: string, assets: AssetsManifest): Prom
 }
 
 function upsertAssembleAudioAsset(assets: AssetsManifest, audioPath: string): void {
+  const existingRealAudio = assets.assets.find(
+    (asset) =>
+      asset.type === "voiceover" &&
+      asset.file_path === audioPath &&
+      asset.provider !== "mock" &&
+      asset.generation_status === "success"
+  );
+  if (existingRealAudio) {
+    return;
+  }
   const isMockWav = audioPath.endsWith("/silent.wav") || audioPath.endsWith("/voiceover.wav");
   const assetId = isMockWav ? "asset_mock_silent_audio" : "asset_silent_audio";
   const existing = assets.assets.find((asset) => asset.asset_id === assetId);
@@ -125,30 +166,12 @@ function upsertAssembleAudioAsset(assets: AssetsManifest, audioPath: string): vo
   }
 }
 
-export async function mockAssembleForTask(taskId: string): Promise<AssetsManifest> {
-  const task = await getTask(taskId);
-  const assets = await readTaskArtifact<AssetsManifest>(taskId, "assets.json");
-  assets.assemble_status = {
-    ...assets.assemble_status,
-    status: "mocked",
-    note: "Mock assembly completed. No MP4 was generated; this is a reserved v0.3 entry point for FFmpeg/MoviePy/Remotion."
-  };
-
-  const { relativePath } = await writeTaskArtifact(taskId, "assets.json", assets);
-  task.files.assets_json = relativePath;
-  task.export_paths.mp4 = assets.assemble_status.mp4_reserved_path;
-  setTaskStatus(task, "mocked", "assemble");
-  await saveTask(task);
-  return assets;
-}
-
 export async function assembleVideoForTask(taskId: string): Promise<AssetsManifest> {
   const task = await getTask(taskId);
   const assets = await readTaskArtifact<AssetsManifest>(taskId, "assets.json");
   const outputDir = getTaskOutputsDir(taskId);
   const finalDir = path.join(getTaskDir(taskId), "final");
   const finalVideoOnlyPath = path.join(finalDir, "video-only.mp4");
-  const concatListPath = path.join(finalDir, "concat.txt");
   const outputPath = path.join(outputDir, "final.mp4");
   const outputRelativePath = toProjectRelativePath(outputPath);
 
@@ -162,22 +185,24 @@ export async function assembleVideoForTask(taskId: string): Promise<AssetsManife
       throw new Error("No mock scene video assets are available for assembly.");
     }
 
-    await writeFile(
-      concatListPath,
-      sceneVideoPaths.map((filePath) => `file '${escapeConcatPath(filePath)}'`).join("\n"),
-      "utf8"
-    );
-
+    const concatInputs = sceneVideoPaths.flatMap((filePath) => ["-i", filePath]);
     await runFfmpeg([
       "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      concatListPath,
-      "-c",
-      "copy",
+      ...concatInputs,
+      "-filter_complex",
+      buildNormalizeConcatFilter(sceneVideoPaths.length),
+      "-map",
+      "[outv]",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
       finalVideoOnlyPath
     ]);
 
@@ -207,21 +232,25 @@ export async function assembleVideoForTask(taskId: string): Promise<AssetsManife
 
     await runFfprobe(["-v", "error", "-show_format", "-show_streams", outputPath]);
 
+    const containsMockScenes = hasMockSceneClips(assets);
+
     assets.assemble_status = {
       ...assets.assemble_status,
-      status: "success",
+      status: containsMockScenes ? "mocked" : "success",
       mode: "ffmpeg",
       mp4_reserved_path: outputRelativePath,
       mp4_path: outputRelativePath,
       subtitle_path: subtitlePath,
       audio_path: audioPath,
-      note: "FFmpeg assembled a real MP4 from local scene clips and the selected audio track. The file is playable."
+      note: containsMockScenes
+        ? "FFmpeg assembled a playable preview MP4, but one or more scenes are explicit mock placeholders. Do not treat this file as a finished generated video."
+        : "FFmpeg assembled a real MP4 from generated scene clips and the selected audio track. The file is playable."
     };
 
     const { relativePath } = await writeTaskArtifact(taskId, "assets.json", assets);
     task.files.assets_json = relativePath;
     task.export_paths.mp4 = outputRelativePath;
-    setTaskStatus(task, "success", "assemble");
+    setTaskStatus(task, containsMockScenes ? "mocked" : "success", "assemble");
     await saveTask(task);
     return assets;
   } catch (error) {
@@ -247,6 +276,6 @@ export async function assembleVideoForTask(taskId: string): Promise<AssetsManife
     task.errors.push(errorRecord);
     setTaskStatus(task, "failed", "assemble");
     await saveTask(task);
-    return assets;
+    throw new Error(`FFmpeg assembly failed: ${message}`);
   }
 }

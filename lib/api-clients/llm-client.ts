@@ -17,6 +17,11 @@ export type JsonSchema = {
   $defs?: Record<string, unknown>;
 };
 
+export type StructuredOutputImage = {
+  /** A complete data URL, e.g. "data:image/jpeg;base64,...". */
+  dataUrl: string;
+};
+
 export type StructuredOutputRequest<T> = {
   step: string;
   schemaName: string;
@@ -24,6 +29,19 @@ export type StructuredOutputRequest<T> = {
   systemPrompt: string;
   userPrompt: string;
   validate: (value: unknown) => value is T;
+  /**
+   * Optional reference images (e.g. extracted source-video frames).
+   * Only vision-capable providers (currently OpenAI) consume them; text-only
+   * providers ignore the field so existing behavior is unchanged.
+   */
+  images?: StructuredOutputImage[];
+  /**
+   * When true and images + an OpenAI key are available, route this single call
+   * to OpenAI vision even if LLM_PROVIDER is a text-only provider (e.g. deepseek).
+   * Used by the analyze step so the model actually "sees" the source frames
+   * while the rest of the pipeline keeps using the configured text provider.
+   */
+  visionPreferred?: boolean;
 };
 
 export type StructuredOutputResult<T> =
@@ -74,6 +92,27 @@ export async function loadDotEnvOnce(): Promise<void> {
   }
 }
 
+/**
+ * Re-reads .env and OVERRIDES process.env for every key found. Unlike
+ * loadDotEnvOnce (which only fills undefined keys once), this lets the in-app
+ * settings panel apply config changes immediately, without restarting the dev
+ * server. Subsequent reads of process.env.* across all clients see fresh values.
+ */
+export async function reloadEnv(): Promise<void> {
+  try {
+    const content = await readFile(path.join(process.cwd(), ".env"), "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      const parsed = parseEnvLine(line);
+      if (parsed) {
+        process.env[parsed.key] = parsed.value;
+      }
+    }
+    envLoaded = true;
+  } catch {
+    // Missing .env is fine; defaults remain mock-safe.
+  }
+}
+
 export function getLlmMode(): ClientMode {
   return process.env.MOCK_MODE === "false" ? "real" : "mock";
 }
@@ -109,6 +148,16 @@ export async function generateLLMStructuredJson<T>(
 
   if (getLlmMode() === "mock") {
     return { mode: "mock", provider: "mock" };
+  }
+
+  // Vision override: when this call carries reference images and prefers vision,
+  // route to OpenAI (vision-capable) even if LLM_PROVIDER is text-only, as long
+  // as an OpenAI key exists. Other steps keep using the configured provider.
+  if (request.visionPreferred && request.images && request.images.length > 0 && process.env.OPENAI_API_KEY) {
+    const result = await generateOpenAIStructuredJson(request);
+    return result.mode === "real"
+      ? { ...result, provider: "openai" }
+      : { ...result, provider: "mock" };
   }
 
   const provider = getLlmProvider();

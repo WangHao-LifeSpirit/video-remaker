@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { generateRemakePlanForTask } from "../lib/agents/content-creator-agent";
-import { runFullMockPipeline } from "../lib/agents/orchestrator";
+import { orchestrateTask } from "../lib/agents/orchestrator";
 import { generateStoryboardForTask } from "../lib/agents/storyboard-agent";
 import { exportJsonForTask } from "../lib/export/json-exporter";
 import { exportMarkdownForTask } from "../lib/export/markdown-exporter";
@@ -13,7 +13,7 @@ import { analyzeForTask } from "../lib/tools/video-analyzer";
 import { generateVideoPromptsForTask } from "../lib/tools/prompt-generator";
 import { generateAssetsForTask, generateMockAssetsForTask } from "../lib/tools/asset-generator";
 import { assembleVideoForTask } from "../lib/tools/video-assembler";
-import { normalizeBoolean, parseAssetProvider, parsePositiveInteger, runFullPipeline } from "../lib/tools/run-full";
+import { normalizeBoolean, parseAssetProvider, parsePositiveInteger } from "../lib/tools/run-full";
 import { clearTaskErrors } from "../lib/tools/error-log";
 import { reviewTask } from "../lib/tools/review";
 import { checkRuntimeConfig } from "../lib/tools/config-check";
@@ -85,18 +85,20 @@ function commonTaskOptions(command: Command, useDefaults: boolean): Command {
 program
   .name("video-maker")
   .description("Short-video original-remake automation CLI")
-  .version("2.0.0");
+  .version("2.1.0");
 
 commonTaskOptions(
   program
     .command("init-task")
     .description("Create a task directory and task.json")
+    .option("--task-name <name>", "Human-readable task name")
     .option("--url <url>", "Optional source URL")
     .option("--upload <path>", "Optional owned upload path"),
   true
 ).action(async (options) => {
   const task = await createTask({
     ...buildUserInputs(options),
+    task_name: options.taskName,
     original_url: options.url,
     upload_path: options.upload
   });
@@ -139,7 +141,7 @@ commonTaskOptions(
 
 program
   .command("analyze")
-  .description("Generate mock original-video structure analysis")
+  .description("Analyze source material using the configured LLM or an explicit mock fallback")
   .requiredOption("--task <taskId>", "Task ID")
   .action(async (options) => {
     printJson(await analyzeForTask(options.task));
@@ -147,7 +149,7 @@ program
 
 program
   .command("storyboard")
-  .description("Generate mock storyboard analysis")
+  .description("Generate a storyboard using the configured LLM or an explicit mock fallback")
   .requiredOption("--task <taskId>", "Task ID")
   .action(async (options) => {
     printJson(await generateStoryboardForTask(options.task));
@@ -179,9 +181,9 @@ program
 
 program
   .command("generate-assets")
-  .description("Generate local video assets for prompts. Supports guarded single-scene provider generation.")
+  .description("Generate guarded provider assets for selected scenes, with explicit mock fallback")
   .requiredOption("--task <taskId>", "Task ID")
-  .option("--provider <provider>", "mock | kling | luma | seedance", "mock")
+  .option("--provider <provider>", "mock | kling | seedance", "mock")
   .option("--scene-limit <count>", "Maximum scenes to generate with a real provider", "1")
   .option("--force", "Regenerate provider assets instead of reusing existing successful assets", false)
   .action(async (options) => {
@@ -333,7 +335,7 @@ program
 
 program
   .command("assemble")
-  .description("Assemble a real MP4 from local mock placeholder assets using FFmpeg")
+  .description("Assemble final.mp4 from the current real and/or mock scene assets using FFmpeg")
   .requiredOption("--task <taskId>", "Task ID")
   .action(async (options) => {
     printJson(await assembleVideoForTask(options.task));
@@ -355,32 +357,12 @@ program
 
 commonTaskOptions(
   program
-    .command("run")
-    .description("Run the full v0.1 mock pipeline")
-    .requiredOption("--task <taskId>", "Task ID")
-    .option("--url <url>", "Optional URL or noisy share text")
-    .option("--upload <path>", "Optional owned upload path")
-    .option("--assemble", "Also run mock assemble", false),
-  false
-).action(async (options) => {
-  const task = await runFullMockPipeline(options.task, {
-    ...buildUserInputs(options),
-    url: options.url,
-    upload: options.upload,
-    assemble: options.assemble,
-    export: true
-  });
-  printJson(task);
-});
-
-commonTaskOptions(
-  program
     .command("run-full")
     .description("Run or resume the full pipeline with guarded provider asset generation")
     .option("--task <taskId>", "Existing task ID. Omit to create a new task.")
     .option("--url <url>", "Optional URL or noisy share text")
     .option("--upload <path>", "Optional owned upload path")
-    .option("--provider <provider>", "mock | kling | luma | seedance", "mock")
+    .option("--provider <provider>", "mock | kling | seedance", "mock")
     .option("--scene-limit <count>", "Maximum real-provider scenes to generate", "3")
     .option("--assemble", "Assemble final.mp4 after asset generation", false)
     .option("--export", "Export Markdown and JSON packages after assembly", false)
@@ -393,7 +375,7 @@ commonTaskOptions(
   false
 ).action(async (options) => {
   printJson(
-    await runFullPipeline({
+    await orchestrateTask({
       ...buildUserInputs(options),
       taskId: options.task,
       url: options.url,

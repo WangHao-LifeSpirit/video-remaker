@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRunFullRuntimeStatus, parseAssetProvider, parsePositiveInteger } from "../../../../../../lib/tools/run-full";
 import { startRunFullJob } from "../../../../../../lib/tools/run-full-job";
-import { findActiveJobForTask } from "../../../../../../lib/tools/job-store";
 
 type RunFullJobRequestBody = {
   provider?: "mock" | "seedance";
@@ -12,7 +11,8 @@ type RunFullJobRequestBody = {
   resume?: boolean;
 };
 
-export async function POST(request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const body = (await request.json().catch(() => ({}))) as RunFullJobRequestBody;
     const runtime = await getRunFullRuntimeStatus();
@@ -29,17 +29,8 @@ export async function POST(request: Request, { params }: { params: { taskId: str
       );
     }
 
-    const activeJob = await findActiveJobForTask(params.taskId);
-    if (activeJob) {
-      return NextResponse.json({
-        ...activeJob,
-        reused: true,
-        message: "A queued or running job already exists for this task."
-      });
-    }
-
-    const job = await startRunFullJob({
-      taskId: params.taskId,
+    const { job, reused } = await startRunFullJob({
+      taskId,
       provider,
       sceneLimit,
       assemble: body.assemble ?? true,
@@ -53,7 +44,9 @@ export async function POST(request: Request, { params }: { params: { taskId: str
       task_id: job.task_id,
       status: job.status,
       current_step: job.current_step,
-      steps: job.steps
+      steps: job.steps,
+      reused,
+      message: reused ? "该任务已有运行中的作业，已继续跟踪原作业。" : undefined
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create run-full job.";

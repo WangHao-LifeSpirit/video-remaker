@@ -13,6 +13,10 @@ export type JsonSchema = {
   $defs?: Record<string, unknown>;
 };
 
+export type StructuredOutputImage = {
+  dataUrl: string;
+};
+
 export type StructuredOutputRequest<T> = {
   step: string;
   schemaName: string;
@@ -20,6 +24,8 @@ export type StructuredOutputRequest<T> = {
   systemPrompt: string;
   userPrompt: string;
   validate: (value: unknown) => value is T;
+  images?: StructuredOutputImage[];
+  visionPreferred?: boolean;
 };
 
 export type StructuredOutputResult<T> =
@@ -131,9 +137,16 @@ export async function generateOpenAIStructuredJson<T>(
     return { mode: "mock" };
   }
 
+  const hasImages = Array.isArray(request.images) && request.images.length > 0;
+  // Vision calls default to gpt-4o when no model is configured, so OPENAI_MODEL
+  // is only strictly required for text-only calls.
+  const model = hasImages
+    ? process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || "gpt-4o"
+    : process.env.OPENAI_MODEL;
+
   const missing = [];
   if (!process.env.OPENAI_API_KEY) missing.push("OPENAI_API_KEY");
-  if (!process.env.OPENAI_MODEL) missing.push("OPENAI_MODEL");
+  if (!model) missing.push("OPENAI_MODEL");
   if (missing.length > 0) {
     const error = missingConfigError(request.step, missing);
     return {
@@ -145,6 +158,15 @@ export async function generateOpenAIStructuredJson<T>(
 
   try {
     const baseUrl = trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
+    const userContent = hasImages
+      ? [
+          { type: "input_text", text: request.userPrompt },
+          ...request.images!.map((image) => ({
+            type: "input_image" as const,
+            image_url: image.dataUrl
+          }))
+        ]
+      : request.userPrompt;
     const response = await fetch(`${baseUrl}/responses`, {
       method: "POST",
       headers: {
@@ -152,7 +174,7 @@ export async function generateOpenAIStructuredJson<T>(
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL,
+        model,
         input: [
           {
             role: "system",
@@ -160,7 +182,7 @@ export async function generateOpenAIStructuredJson<T>(
           },
           {
             role: "user",
-            content: request.userPrompt
+            content: userContent
           }
         ],
         text: {

@@ -1,4 +1,5 @@
 import type { JsonSchema } from "../api-clients/llm-client";
+import type { VideoAnalysis } from "../types/analysis";
 import type { RemakePlan } from "../types/remake-plan";
 import type { VideoRemakeTask } from "../types/task";
 import type { VideoModelPrompt } from "../types/video-prompts";
@@ -46,10 +47,24 @@ export const videoPromptsSchema: JsonSchema = objectSchema({
   })
 });
 
-export function buildVideoPromptsPrompt(task: VideoRemakeTask, remakePlan: RemakePlan): {
+export function buildVideoPromptsPrompt(
+  task: VideoRemakeTask,
+  remakePlan: RemakePlan,
+  visualStyle?: VideoAnalysis["visual_style"]
+): {
   systemPrompt: string;
   userPrompt: string;
 } {
+  const styleLines = visualStyle
+    ? [
+        "下面是从原视频画面观察到的视觉风格（source_visual_style）。每条 prompt 都要复现这种视觉调性——",
+        "景别(shot_types)、构图(composition)、色调(color_tone)、光线(lighting)、运镜(camera_movement)、字幕/文字样式(text_overlay_style)，",
+        "但画面内容、主体、案例必须原创，不得复制原视频可识别的具体镜头或文字。",
+        "",
+        `source_visual_style:\n${compactJson(visualStyle)}`,
+        ""
+      ]
+    : [];
   return {
     systemPrompt: SAFETY_SYSTEM_PROMPT,
     userPrompt: [
@@ -58,7 +73,7 @@ export function buildVideoPromptsPrompt(task: VideoRemakeTask, remakePlan: Remak
       "prompt 必须生成原创画面，不能复刻原视频可识别镜头、字幕、平台 UI、水印或人物形象。",
       "negative_prompt 必须排除 copied footage、watermark、logos、platform UI、duplicated source video 等风险。",
       "duration、aspect_ratio、camera_motion 和 style_tags 要能被后续视频生成器读取。",
-      "",
+      ...styleLines,
       `task_json:\n${compactJson(task)}`,
       "",
       `remake_plan_json:\n${compactJson(remakePlan)}`

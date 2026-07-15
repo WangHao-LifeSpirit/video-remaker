@@ -1,17 +1,136 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { VideoAnalysis } from "../types/analysis";
 import type { VideoInputArtifact } from "../types/input";
+import type { SourceFramesArtifact } from "../types/source-frames";
+import type { SourceVideoMetadata } from "../types/source-video";
 import { createErrorRecord, fallbackMockMeta, mockMeta, realMeta } from "../types/common";
 import {
   analyzeSchema,
   buildAnalyzePrompt,
   isAnalysisModelOutput
 } from "../prompts/analyze";
-import { generateLLMStructuredJson } from "../api-clients/llm-client";
-import { getTask, readTaskArtifact, saveTask, setTaskStatus, writeTaskArtifact } from "./task-store";
+import {
+  generateLLMStructuredJson,
+  getLlmMode,
+  loadDotEnvOnce,
+  type StructuredOutputImage
+} from "../api-clients/llm-client";
+import { getTask, readTaskArtifact, resolveProjectPath, saveTask, setTaskStatus, writeTaskArtifact } from "./task-store";
+import { analyzeSourceVideoForTask } from "./source-video-analyzer";
+import { extractFramesForTask } from "./frame-extractor";
+
+const DEFAULT_MAX_ANALYSIS_FRAMES = 6;
+
+async function prepareUploadedSource(taskId: string, sourceInput: VideoInputArtifact): Promise<{
+  sourceVideo?: SourceVideoMetadata;
+  preparationErrors: VideoAnalysis["errors"];
+}> {
+  const uploadedPath = sourceInput.uploaded_video?.uploaded_video_path ?? sourceInput.source.upload_path;
+  if (!uploadedPath) {
+    return { preparationErrors: [] };
+  }
+
+  const preparationErrors: VideoAnalysis["errors"] = [];
+  let sourceVideo: SourceVideoMetadata | undefined;
+  try {
+    sourceVideo = await readTaskArtifact<SourceVideoMetadata>(taskId, "source_video.json");
+  } catch {
+    // Generated below.
+  }
+
+  try {
+    if (!sourceVideo || sourceVideo.status !== "success" || sourceVideo.uploaded_video_path !== uploadedPath) {
+      sourceVideo = await analyzeSourceVideoForTask(taskId);
+    }
+    if (sourceVideo.status === "success") {
+      let frames: SourceFramesArtifact | undefined;
+      try {
+        frames = await readTaskArtifact<SourceFramesArtifact>(taskId, "source_frames.json");
+      } catch {
+        // Generated below.
+      }
+      if (!frames || frames.status !== "success" || frames.source_video_path !== uploadedPath || frames.frames.length === 0) {
+        await extractFramesForTask({ taskId, maxFrames: 8 });
+      }
+    }
+  } catch (error) {
+    preparationErrors.push(
+      createErrorRecord({
+        step: "analyze",
+        message: `Uploaded video preprocessing failed; continuing with text-only material. Reason: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        code: "SOURCE_PREPROCESS_FAILED",
+        recoverable: true
+      })
+    );
+  }
+
+  return { sourceVideo, preparationErrors };
+}
+
+function mimeForFrame(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
+/**
+ * Loads up to MAX_ANALYSIS_FRAMES extracted source frames as base64 data URLs so
+ * the analyze step can be sent to a vision model. Missing frames / missing
+ * source_frames.json simply yield an empty list (text-only analysis fallback).
+ */
+async function loadSourceFrameImages(taskId: string): Promise<StructuredOutputImage[]> {
+  let manifest: SourceFramesArtifact;
+  try {
+    manifest = await readTaskArtifact<SourceFramesArtifact>(taskId, "source_frames.json");
+  } catch {
+    return [];
+  }
+  const frames = Array.isArray(manifest.frames) ? manifest.frames : [];
+  if (frames.length === 0) return [];
+
+  const maxFrames = (() => {
+    const parsed = Number(process.env.MAX_ANALYSIS_FRAMES);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_ANALYSIS_FRAMES;
+  })();
+
+  // Evenly sample across the timeline when there are more frames than the cap.
+  const step = Math.max(1, Math.ceil(frames.length / maxFrames));
+  const sampled = frames.filter((_, index) => index % step === 0).slice(0, maxFrames);
+
+  const images: StructuredOutputImage[] = [];
+  for (const frame of sampled) {
+    if (!frame.file_path) continue;
+    try {
+      const bytes = await readFile(resolveProjectPath(frame.file_path));
+      images.push({
+        dataUrl: `data:${mimeForFrame(frame.file_path)};base64,${bytes.toString("base64")}`
+      });
+    } catch {
+      // Skip unreadable frames; remaining frames still help.
+    }
+  }
+  return images;
+}
 
 function compactText(value?: string, fallback = "未提供明确文本"): string {
   const text = (value ?? "").trim().replace(/\s+/g, " ");
   return text ? text.slice(0, 120) : fallback;
+}
+
+function hasDescriptiveSourceText(task: Awaited<ReturnType<typeof getTask>>, input: VideoInputArtifact): boolean {
+  return [
+    input.source_transcript,
+    input.source_caption,
+    input.screenshot_notes,
+    input.remake_requirements,
+    task.user_inputs.transcript,
+    task.user_inputs.text_notes,
+    task.user_inputs.screenshot_notes
+  ].some((value) => Boolean(value?.trim()));
 }
 
 function buildMockAnalysis(input: {
@@ -59,6 +178,16 @@ function buildMockAnalysis(input: {
       subtitle_density: "中高密度，短句、关键词突出。",
       visual_density: "中高密度，画面变化服务信息递进。"
     },
+    visual_style: {
+      shot_types: "未提供画面，无法确认；建议以特写与中近景交替的竖屏短视频常见景别为参考。",
+      composition: "竖屏 9:16，主体居中或三分法构图。",
+      color_tone: "平台原生、高对比、明快色调。",
+      lighting: "明亮、均匀，主体清晰。",
+      camera_movement: "轻微推拉或快速剪辑，服务信息递进。",
+      text_overlay_style: "底部短句字幕，关键词突出。",
+      subject: `围绕「${notes}」的主体对象。`
+    },
+    shot_breakdown: [],
     risk_notes: [
       "此结果为 mock 分析，不代表已真实获取原视频字幕、关键帧或音频。",
       "后续生成必须保持原创表达，不搬运原片素材。"
@@ -68,7 +197,7 @@ function buildMockAnalysis(input: {
 }
 
 export async function analyzeForTask(taskId: string): Promise<VideoAnalysis> {
-  const task = await getTask(taskId);
+  let task = await getTask(taskId);
   const input = await readTaskArtifact<VideoInputArtifact>(taskId, "input.json");
 
   if (input.available_materials.length === 0) {
@@ -107,7 +236,7 @@ export async function analyzeForTask(taskId: string): Promise<VideoAnalysis> {
         subtitle_density: "待补充",
         visual_density: "待补充"
       },
-      risk_notes: ["v0.1 没有真实读取平台视频，只基于用户提供材料和链接元信息生成 mock 分析。"],
+      risk_notes: ["当前没有可用材料可供分析；系统不会下载平台视频或假装已经理解原片。"],
       errors: [error]
     };
     const { relativePath } = await writeTaskArtifact(taskId, "analysis.json", failed);
@@ -118,17 +247,61 @@ export async function analyzeForTask(taskId: string): Promise<VideoAnalysis> {
     return failed;
   }
 
-  const prompt = buildAnalyzePrompt(task, input);
+  const { sourceVideo, preparationErrors } = await prepareUploadedSource(taskId, input);
+  task = await getTask(taskId);
+  await loadDotEnvOnce();
+  const frameImages = await loadSourceFrameImages(taskId);
+  const visionCanSeeFrames = getLlmMode() === "real" && Boolean(process.env.OPENAI_API_KEY) && frameImages.length > 0;
+  if (!visionCanSeeFrames && !hasDescriptiveSourceText(task, input) && (
+    input.uploaded_video?.uploaded_video_path || input.source.upload_path
+  )) {
+    const error = createErrorRecord({
+      step: "analyze",
+      message: "原视频已上传并抽取关键帧，但当前 LLM 无法直接查看画面，且没有字幕、文案或画面说明。为避免生成不相关内容，流程已暂停。",
+      code: "VISION_OR_SOURCE_TEXT_REQUIRED",
+      recoverable: true
+    });
+    const analysis: VideoAnalysis = {
+      ...buildMockAnalysis({
+        taskId,
+        task,
+        sourceInput: input,
+        fallbackReason: error.message,
+        errors: [...preparationErrors, error]
+      }),
+      status: "needs_user_input",
+      risk_notes: [
+        "当前分析没有直接读取关键帧画面，不能据此生成与原视频高度相关的分镜。",
+        "请补充原字幕、原文案或画面说明；也可以配置 OpenAI 视觉能力后重新分析。"
+      ]
+    };
+    const { relativePath } = await writeTaskArtifact(taskId, "analysis.json", analysis);
+    task.files.analysis_json = relativePath;
+    task.errors.push(error);
+    setTaskStatus(task, "needs_user_input", "analyze");
+    await saveTask(task);
+    return analysis;
+  }
+  const prompt = buildAnalyzePrompt(task, input, {
+    visionCanSeeFrames,
+    extractedFrameCount: frameImages.length,
+    sourceVideo
+  });
   const result = await generateLLMStructuredJson({
     step: "analyze",
     schemaName: "analysis",
     schema: analyzeSchema,
     systemPrompt: prompt.systemPrompt,
     userPrompt: prompt.userPrompt,
-    validate: isAnalysisModelOutput
+    validate: isAnalysisModelOutput,
+    images: visionCanSeeFrames ? frameImages : undefined,
+    visionPreferred: visionCanSeeFrames
   });
 
-  const errors = result.mode === "mock" && result.error ? [result.error] : [];
+  const errors = [
+    ...preparationErrors,
+    ...(result.mode === "mock" && result.error ? [result.error] : [])
+  ];
   const analysis: VideoAnalysis = result.mode === "real"
     ? {
         task_id: taskId,
@@ -140,7 +313,13 @@ export async function analyzeForTask(taskId: string): Promise<VideoAnalysis> {
           missing_materials: input.missing_materials
         },
         ...result.data,
-        errors: []
+        risk_notes: [
+          ...result.data.risk_notes,
+          ...(!visionCanSeeFrames && frameImages.length > 0
+            ? ["关键帧已抽取，但当前没有可用的 OpenAI 视觉配置；本次没有直接读取关键帧画面。"]
+            : [])
+        ],
+        errors
       }
     : buildMockAnalysis({
         taskId,

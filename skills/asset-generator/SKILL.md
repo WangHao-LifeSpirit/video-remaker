@@ -2,7 +2,7 @@
 asset-generator
 
 # Description
-Create a v0.1 mock asset manifest and timeline from video prompts and remake storyboard.
+Create a guarded asset manifest and timeline from video prompts and the remake storyboard.
 
 # When to use
 Use after `video_prompts.json` exists.
@@ -12,20 +12,21 @@ Use after `video_prompts.json` exists.
 - `remake_plan.json`
 
 # Workflow
-1. Create mock asset records for each scene.
-2. Build a timeline from scene durations.
-3. Reserve output paths without creating real generated video.
-4. Write `assets.json`.
+1. Read the selected provider, cost guard, scene limit, and existing successful assets.
+2. Generate bounded Seedance/Kling assets when explicitly allowed, otherwise create visible Mock placeholders.
+3. Build a timeline from scene durations.
+4. Reuse successful provider scenes unless force regeneration was requested.
+5. Write `assets.json` with per-scene provider and generation truth.
 
 # Output format
 `assets.json` with assets, timeline, assemble status, mock metadata, and errors.
 
 # Safety rules
-- Always mark generated assets as mock in v0.1.
-- Do not claim real Kling or Seedance assets exist.
+- Mark every fallback asset as Mock and keep mixed manifests in `mocked` status.
+- Do not claim real Kling or Seedance assets exist unless local files and successful provider results are present.
 
 # Related CLI command
-`video-maker mock-assets --task <task_id>`
+`video-maker generate-assets --task <task_id> --provider <mock|seedance|kling> --scene-limit <n>`
 
 # Failure handling
 If prompts are missing, stop and report the missing artifact.

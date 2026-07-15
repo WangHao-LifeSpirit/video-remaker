@@ -3,8 +3,9 @@ import { linkParserNextAction, parseSourceLinkForTask } from "../../../../../lib
 
 export async function POST(
   request: Request,
-  { params }: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
+  const { taskId } = await params;
   try {
     const body = await request.json().catch(() => ({})) as { url?: unknown };
     if (typeof body.url !== "string" || !body.url.trim()) {
@@ -16,7 +17,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    const sourceLink = await parseSourceLinkForTask(params.taskId, body.url);
+    const sourceLink = await parseSourceLinkForTask(taskId, body.url);
     return NextResponse.json({
       source_link: sourceLink,
       next_action: sourceLink.user_next_action ?? linkParserNextAction()

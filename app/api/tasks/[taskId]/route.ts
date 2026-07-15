@@ -12,9 +12,10 @@ async function optionalArtifact<T>(filePath?: string): Promise<T | null> {
   }
 }
 
-export async function GET(_request: Request, { params }: { params: { taskId: string } }) {
+export async function GET(_request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
-    const task = await getTask(params.taskId);
+    const task = await getTask(taskId);
     const artifacts = {
       input: await optionalArtifact(task.files.input_json),
       analysis: await optionalArtifact(task.files.analysis_json),

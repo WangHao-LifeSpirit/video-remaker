@@ -1,9 +1,11 @@
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { generateRemakePlanForTask } from "../agents/content-creator-agent";
+import { parserIngest, parserResolveLink } from "../agents/parser-agent";
 import { generateStoryboardForTask } from "../agents/storyboard-agent";
 import { exportJsonForTask } from "../export/json-exporter";
 import { exportMarkdownForTask } from "../export/markdown-exporter";
 import type { TaskUserInputs, VideoRemakeTask } from "../types/task";
+import type { AssetsManifest } from "../types/assets";
 import { loadDotEnvOnce } from "../api-clients/llm-client";
 import { generateAssetsForTask } from "./asset-generator";
 import { assembleVideoForTask } from "./video-assembler";
@@ -14,12 +16,10 @@ import { generateVoiceoverForTask } from "./voiceover-generator";
 import { generateSubtitlesForTask } from "./subtitle-generator";
 import { generateMockAudioForTask } from "./audio-generator";
 import { createTask, getTask, getTaskDir, resolveProjectPath } from "./task-store";
-import { ingestForTask } from "./video-ingest";
-import { resolveLinkForTask } from "./link-resolver";
 
-export type VideoProvider = "mock" | "seedance" | "kling" | "luma";
+export type VideoProvider = "mock" | "seedance" | "kling";
 export type StableVideoProvider = "mock" | "seedance";
-export type ExperimentalVideoProvider = "kling" | "luma";
+export type ExperimentalVideoProvider = "kling";
 export type AssetProvider = VideoProvider;
 
 export type RunFullInput = Partial<TaskUserInputs> & {
@@ -83,8 +83,8 @@ export function parsePositiveInteger(value: unknown, fallback: number): number {
 
 export function parseAssetProvider(value: unknown): AssetProvider {
   const provider = String(value ?? "mock");
-  if (!["mock", "kling", "luma", "seedance"].includes(provider)) {
-    throw new Error("provider must be one of: mock, kling, luma, seedance.");
+  if (!["mock", "kling", "seedance"].includes(provider)) {
+    throw new Error("provider must be one of: mock, kling, seedance.");
   }
   return provider as AssetProvider;
 }
@@ -115,11 +115,24 @@ async function shouldRunArtifactStep(input: {
   fileName: string;
   resume: boolean;
   force: boolean;
+  dependsOn?: string[];
 }): Promise<boolean> {
   if (input.force || !input.resume) {
     return true;
   }
-  return !(await taskArtifactExists(input.taskId, input.fileName));
+  const artifactPath = resolveProjectPath(`${getTaskDir(input.taskId)}/${input.fileName}`);
+  const artifactStat = await stat(artifactPath).catch(() => undefined);
+  if (!artifactStat?.isFile()) {
+    return true;
+  }
+  for (const dependency of input.dependsOn ?? []) {
+    const dependencyPath = resolveProjectPath(`${getTaskDir(input.taskId)}/${dependency}`);
+    const dependencyStat = await stat(dependencyPath).catch(() => undefined);
+    if (dependencyStat?.isFile() && dependencyStat.mtimeMs > artifactStat.mtimeMs) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function getRunFullRuntimeStatus(): Promise<{
@@ -131,6 +144,7 @@ export async function getRunFullRuntimeStatus(): Promise<{
   paid_api_calls: boolean;
   max_video_scenes_per_run: number;
   enable_paid_api_calls_raw: string;
+  vision_input_available: boolean;
 }> {
   await loadDotEnvOnce();
   return {
@@ -141,7 +155,8 @@ export async function getRunFullRuntimeStatus(): Promise<{
     video_provider: process.env.VIDEO_PROVIDER ?? "mock",
     paid_api_calls: process.env.ENABLE_PAID_API_CALLS === "true",
     max_video_scenes_per_run: parsePositiveInteger(process.env.MAX_VIDEO_SCENES_PER_RUN, 3),
-    enable_paid_api_calls_raw: process.env.ENABLE_PAID_API_CALLS ?? "false"
+    enable_paid_api_calls_raw: process.env.ENABLE_PAID_API_CALLS ?? "false",
+    vision_input_available: process.env.MOCK_MODE === "false" && Boolean(process.env.OPENAI_API_KEY)
   };
 }
 
@@ -151,10 +166,13 @@ function buildCostGuardNote(input: {
   sceneLimit: number;
   maxScenes: number;
 }): string {
+  if (input.provider === "mock") {
+    return "当前选择 Mock provider，不会调用付费视频 API。";
+  }
   if (input.sceneLimit > input.maxScenes) {
     return `scene-limit exceeds MAX_VIDEO_SCENES_PER_RUN=${input.maxScenes}.`;
   }
-  if (input.provider !== "mock" && !input.paidApiCalls) {
+  if (!input.paidApiCalls) {
     return "真实视频生成被成本保护关闭，运行将 fallback mock 或 dry-run。";
   }
   return "成本保护检查通过；真实 provider 仍会复用已成功 scene，除非开启 force。";
@@ -228,6 +246,34 @@ async function buildRunFullDryRun(input: {
   const task = await getTask(input.taskId);
   const artifacts = await getExistingArtifacts(input.taskId);
   const ingestWouldRun = !artifacts.input_json || hasInputUpdate(input.options) || input.force || !input.resume;
+  const analyzeWouldRun = ingestWouldRun || await shouldRunArtifactStep({
+    taskId: input.taskId,
+    fileName: "analysis.json",
+    resume: input.resume,
+    force: input.force,
+    dependsOn: ["input.json"]
+  });
+  const storyboardWouldRun = analyzeWouldRun || await shouldRunArtifactStep({
+    taskId: input.taskId,
+    fileName: "storyboard.json",
+    resume: input.resume,
+    force: input.force,
+    dependsOn: ["analysis.json"]
+  });
+  const remakeWouldRun = storyboardWouldRun || await shouldRunArtifactStep({
+    taskId: input.taskId,
+    fileName: "remake_plan.json",
+    resume: input.resume,
+    force: input.force,
+    dependsOn: ["analysis.json", "storyboard.json"]
+  });
+  const promptsWouldRun = remakeWouldRun || await shouldRunArtifactStep({
+    taskId: input.taskId,
+    fileName: "video_prompts.json",
+    resume: input.resume,
+    force: input.force,
+    dependsOn: ["remake_plan.json", "storyboard.json"]
+  });
   return {
     ...base,
     task_id: input.taskId,
@@ -242,16 +288,16 @@ async function buildRunFullDryRun(input: {
             ? "ingest would run from provided material"
             : "input.json missing: run-full would stop unless input material is provided"
         : "ingest would be skipped",
-      (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "analysis.json", resume: input.resume, force: input.force }))
+      analyzeWouldRun
         ? "analyze would run"
         : "analyze would be skipped",
-      (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "storyboard.json", resume: input.resume, force: input.force }))
+      storyboardWouldRun
         ? "storyboard would run"
         : "storyboard would be skipped",
-      (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "remake_plan.json", resume: input.resume, force: input.force }))
+      remakeWouldRun
         ? "remake would run"
         : "remake would be skipped",
-        (await shouldRunArtifactStep({ taskId: input.taskId, fileName: "video_prompts.json", resume: input.resume, force: input.force }))
+      promptsWouldRun
         ? "prompts would run"
         : "prompts would be skipped",
       input.runReview
@@ -262,7 +308,11 @@ async function buildRunFullDryRun(input: {
       input.prepareAudio
         ? "voiceover, subtitles, and mock audio would run before assembly"
         : "prepare-audio skipped by option",
-      `generate-assets would run with provider=${input.provider}, scene-limit=${input.sceneLimit}; existing successful Seedance scenes are reused unless force is enabled`,
+      `generate-assets would run with provider=${input.provider}, scene-limit=${input.sceneLimit}; ${
+        promptsWouldRun
+          ? "prompts will change, so selected scene assets will be refreshed"
+          : "existing successful provider scenes are reused unless force is enabled"
+      }`,
       input.runAssemble || input.prepareAudio ? "assemble would run" : "assemble skipped by option",
       input.runExport ? "export would run" : "export skipped by option"
     ]
@@ -297,7 +347,8 @@ async function runTrackedStep<T>(
   input: RunFullInput,
   name: string,
   action: () => Promise<T>,
-  skipped = false
+  skipped = false,
+  describeResult?: (result: T) => string | undefined
 ): Promise<T | undefined> {
   if (skipped) {
     await emitStep(input, { name, status: "skipped", message: "Skipped by resume." });
@@ -306,13 +357,28 @@ async function runTrackedStep<T>(
   await emitStep(input, { name, status: "running" });
   try {
     const result = await action();
-    await emitStep(input, { name, status: "success" });
+    await emitStep(input, { name, status: "success", message: describeResult?.(result) });
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitStep(input, { name, status: "failed", message });
     throw error;
   }
+}
+
+function describeGeneratedAssets(manifest: AssetsManifest, requestedProvider: AssetProvider): string {
+  const videoAssets = manifest.assets.filter((asset) => asset.type === "mock_video");
+  const realCount = videoAssets.filter(
+    (asset) => asset.provider === requestedProvider && requestedProvider !== "mock" && asset.generation_status === "success"
+  ).length;
+  const mockCount = videoAssets.filter((asset) => asset.provider === "mock").length;
+  if (requestedProvider === "mock") {
+    return `已生成 ${mockCount} 个 Mock 占位片段；它们只用于验证流程，不是最终生成视频。`;
+  }
+  if (mockCount > 0) {
+    return `素材状态：${requestedProvider} 真实片段 ${realCount} 个，Mock 占位片段 ${mockCount} 个。合成结果属于预览版。`;
+  }
+  return `素材状态：${requestedProvider} 真实片段 ${realCount} 个，无 Mock 占位片段。`;
 }
 
 export async function runFullPipeline(input: RunFullInput): Promise<RunFullResult> {
@@ -360,13 +426,13 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
   }
 
   if (input.url) {
-    await resolveLinkForTask(task.task_id, input.url);
+    await parserResolveLink(task.task_id, input.url);
     steps.push("resolve-link");
   }
 
   const inputExists = await taskArtifactExists(task.task_id, "input.json");
   if (!input.taskId || !inputExists || hasInputUpdate(input) || force || !resume) {
-    await ingestForTask(task.task_id, {
+    await parserIngest(task.task_id, {
       target_platform: input.target_platform,
       duration: input.duration,
       style: input.style,
@@ -386,15 +452,18 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     throw new Error("input.json is missing. Provide text notes, transcript, screenshot notes, or an owned upload before running.");
   }
 
-  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "analysis.json", resume, force })) {
-    await runTrackedStep(input, "analyze", () => analyzeForTask(task.task_id));
+  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "analysis.json", resume, force, dependsOn: ["input.json"] })) {
+    const analysis = await runTrackedStep(input, "analyze", () => analyzeForTask(task.task_id));
+    if (analysis?.status === "needs_user_input") {
+      throw new Error("当前模型无法仅凭上传视频理解画面。请补充原字幕、原文案或画面说明后再运行。");
+    }
     steps.push("analyze");
   } else {
     await runTrackedStep(input, "analyze", async () => undefined, true);
     steps.push("analyze-skipped");
   }
 
-  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "storyboard.json", resume, force })) {
+  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "storyboard.json", resume, force, dependsOn: ["analysis.json"] })) {
     await runTrackedStep(input, "storyboard", () => generateStoryboardForTask(task.task_id));
     steps.push("storyboard");
   } else {
@@ -402,7 +471,7 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     steps.push("storyboard-skipped");
   }
 
-  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "remake_plan.json", resume, force })) {
+  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "remake_plan.json", resume, force, dependsOn: ["analysis.json", "storyboard.json"] })) {
     await runTrackedStep(input, "remake", () => generateRemakePlanForTask(task.task_id));
     steps.push("remake");
   } else {
@@ -410,7 +479,7 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     steps.push("remake-skipped");
   }
 
-  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "video_prompts.json", resume, force })) {
+  if (await shouldRunArtifactStep({ taskId: task.task_id, fileName: "video_prompts.json", resume, force, dependsOn: ["remake_plan.json", "storyboard.json"] })) {
     await runTrackedStep(input, "prompts", () => generateVideoPromptsForTask(task.task_id));
     steps.push("prompts");
   } else {
@@ -433,13 +502,25 @@ export async function runFullPipeline(input: RunFullInput): Promise<RunFullResul
     steps.push("review-skipped");
   }
 
-  await runTrackedStep(input, "generate-assets", () =>
-    generateAssetsForTask({
-      taskId: task.task_id,
-      provider,
-      sceneLimit,
-      force
-    })
+  const assetsAreStale = await shouldRunArtifactStep({
+    taskId: task.task_id,
+    fileName: "assets.json",
+    resume: true,
+    force: false,
+    dependsOn: ["video_prompts.json"]
+  });
+  await runTrackedStep(
+    input,
+    "generate-assets",
+    () =>
+      generateAssetsForTask({
+        taskId: task.task_id,
+        provider,
+        sceneLimit,
+        force: force || assetsAreStale
+      }),
+    false,
+    (manifest) => describeGeneratedAssets(manifest, provider)
   );
   steps.push("generate-assets");
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DATA_DIR } from "./task-store";
+import { assertSafeStorageId, DATA_DIR } from "./task-store";
 import { nowIso } from "../types/common";
 
 export type JobStatus = "queued" | "running" | "success" | "failed";
@@ -32,17 +32,27 @@ export type RunFullJob = {
 };
 
 export const JOBS_DIR = path.join(DATA_DIR, "jobs");
+export const JOB_STALE_AFTER_MS = 30 * 60 * 1000;
+
+const taskJobCreationLocks = new Map<string, Promise<void>>();
 
 export const defaultRunFullJobSteps = ["analyze", "storyboard", "remake", "prompts", "generate-assets", "assemble", "export"];
 
 function getJobPath(jobId: string): string {
-  return path.join(JOBS_DIR, `${jobId}.json`);
+  return path.join(JOBS_DIR, `${assertSafeStorageId(jobId, "job id")}.json`);
 }
 
 async function writeJob(job: RunFullJob): Promise<RunFullJob> {
   job.updated_at = nowIso();
   await mkdir(JOBS_DIR, { recursive: true });
-  await writeFile(getJobPath(job.job_id), `${JSON.stringify(job, null, 2)}\n`, "utf8");
+  const jobPath = getJobPath(job.job_id);
+  const tempPath = `${jobPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(job, null, 2)}\n`, "utf8");
+    await rename(tempPath, jobPath);
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+  }
   return job;
 }
 
@@ -71,14 +81,19 @@ export async function getJob(jobId: string): Promise<RunFullJob> {
 export async function listJobs(): Promise<RunFullJob[]> {
   try {
     const entries = await readdir(JOBS_DIR, { withFileTypes: true });
-    const jobs = await Promise.all(
+    const candidates = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
         .map(async (entry) => {
-          const content = await readFile(path.join(JOBS_DIR, entry.name), "utf8");
-          return JSON.parse(content) as RunFullJob;
+          try {
+            const content = await readFile(path.join(JOBS_DIR, entry.name), "utf8");
+            return JSON.parse(content) as RunFullJob;
+          } catch {
+            return undefined;
+          }
         })
     );
+    const jobs = candidates.filter((job): job is RunFullJob => Boolean(job));
     return jobs.sort((a, b) => b.created_at.localeCompare(a.created_at));
   } catch {
     return [];
@@ -87,12 +102,57 @@ export async function listJobs(): Promise<RunFullJob[]> {
 
 export async function listJobsForTask(taskId: string, limit = 20): Promise<RunFullJob[]> {
   const jobs = await listJobs();
-  return jobs.filter((job) => job.task_id === taskId).slice(0, limit);
+  const selected = jobs.filter((job) => job.task_id === taskId).slice(0, limit);
+  return Promise.all(
+    selected.map(async (job) => {
+      if (job.status !== "queued" && job.status !== "running") {
+        return job;
+      }
+      const updatedAt = Date.parse(job.updated_at);
+      if (!Number.isFinite(updatedAt) || Date.now() - updatedAt <= JOB_STALE_AFTER_MS) {
+        return job;
+      }
+      return markJobFailed(job.job_id, "后台任务超过 30 分钟没有更新，已自动标记为失败。可以使用 resume 重新运行。");
+    })
+  );
 }
 
 export async function findActiveJobForTask(taskId: string): Promise<RunFullJob | undefined> {
   const jobs = await listJobsForTask(taskId, 50);
   return jobs.find((job) => job.status === "queued" || job.status === "running");
+}
+
+async function withTaskJobCreationLock<T>(taskId: string, action: () => Promise<T>): Promise<T> {
+  const safeTaskId = assertSafeStorageId(taskId, "task id");
+  const previous = taskJobCreationLocks.get(safeTaskId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const current = previous.catch(() => undefined).then(() => gate);
+  taskJobCreationLocks.set(safeTaskId, current);
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (taskJobCreationLocks.get(safeTaskId) === current) {
+      taskJobCreationLocks.delete(safeTaskId);
+    }
+  }
+}
+
+export async function createOrReuseRunFullJob(taskId: string): Promise<{
+  job: RunFullJob;
+  reused: boolean;
+}> {
+  return withTaskJobCreationLock(taskId, async () => {
+    const active = await findActiveJobForTask(taskId);
+    if (active) {
+      return { job: active, reused: true };
+    }
+    return { job: await createRunFullJob(taskId), reused: false };
+  });
 }
 
 export async function updateJob(jobId: string, updater: (job: RunFullJob) => void | RunFullJob): Promise<RunFullJob> {

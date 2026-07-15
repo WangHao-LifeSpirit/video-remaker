@@ -1,4 +1,4 @@
-# Customer Handoff v2.0
+# Customer Handoff v2.1.0
 
 ## 产品是什么
 
@@ -14,7 +14,7 @@ Video Remaker 是一个本地网页端短视频复刻自动化工作台。它面
 
 ## 复刻的 Bloome Agent 群组逻辑
 
-v2.0 已把 Bloome 原型中的多 Agent 协作落成本地产品流程：
+v2.1 已把 Bloome 原型中的多 Agent 协作落成本地产品流程：
 
 - Storyboard Agent：拆解结构、分镜、节奏和画面语言。
 - Content Creator Agent：生成原创改编脚本、素材清单、视频 prompt 和发布文案。
@@ -92,12 +92,12 @@ v2.0 已把 Bloome 原型中的多 Agent 协作落成本地产品流程：
 - 当前后台 job 是本地 JSON 轻量实现，不是生产级队列。
 - TTS 真实调用已预留，但不是稳定主链路。
 - ASR 尚未接入真实链路。
-- Kling / Luma 是实验性 provider，不作为稳定交付链路。
+- Kling 是实验性 provider，不作为稳定交付链路。
 - 本地数据依赖本机文件系统。
 
 ## 交付建议
 
-v2.0 适合用于：
+v2.1 适合用于：
 
 - 客户本地演示。
 - 内部内容团队试用。

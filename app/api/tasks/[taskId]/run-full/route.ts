@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getRunFullRuntimeStatus, parsePositiveInteger, runFullPipeline } from "../../../../../lib/tools/run-full";
+import { getRunFullRuntimeStatus, parsePositiveInteger } from "../../../../../lib/tools/run-full";
+import { orchestrateTask } from "../../../../../lib/agents/orchestrator";
 
 type RunFullRequestBody = {
   provider?: "mock" | "seedance";
@@ -21,7 +22,8 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const body = (await request.json().catch(() => ({}))) as RunFullRequestBody;
     const runtime = await getRunFullRuntimeStatus();
@@ -38,8 +40,8 @@ export async function POST(request: Request, { params }: { params: { taskId: str
       );
     }
 
-    const result = await runFullPipeline({
-      taskId: params.taskId,
+    const result = await orchestrateTask({
+      taskId,
       provider,
       sceneLimit,
       assemble: body.assemble ?? true,

@@ -21,7 +21,10 @@ export function VideoPreview({
   version,
   hasOriginal,
   hasSubtitled,
-  subtitledSize
+  subtitledSize,
+  isMock = false,
+  isGenerating = false,
+  isStale = false
 }: {
   taskId: string;
   exists: boolean;
@@ -30,11 +33,15 @@ export function VideoPreview({
   hasOriginal: boolean;
   hasSubtitled: boolean;
   subtitledSize?: number;
+  isMock?: boolean;
+  isGenerating?: boolean;
+  isStale?: boolean;
 }) {
   return (
-    <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold">Step 5：成片预览与导出</h2>
+        <p className="section-kicker">STEP 5 · DELIVERY</p>
+        <h2 className="section-title">成片预览与导出</h2>
         <p className="text-sm text-neutral-600">这里直接预览最终 MP4，并下载原始版、带字幕版和制作包。</p>
         <p className="text-sm text-neutral-600">
           当前预览版本：{version === "subtitled" ? "带字幕版" : version === "original" ? "原始版" : "无"}；文件大小：{exists ? formatBytes(size) : "无"}
@@ -48,6 +55,21 @@ export function VideoPreview({
 
       {exists ? (
         <>
+          {isGenerating ? (
+            <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              当前任务仍在生成中，播放器里可能是上一次合成的旧版本。等后台 job 完成后再用于录屏展示。
+            </p>
+          ) : null}
+          {isStale ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              输入材料、提示词、素材或字幕已更新，播放器仍是上一次合成的旧成片。请重新运行生成与合成流程后再用于交付。
+            </p>
+          ) : null}
+          {isMock ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              当前成片包含 Mock 占位素材。彩色测试图案只用于验证时间轴和播放器，说明真实视频片段尚未生成，或部分 scene 已回退到 Mock。
+            </p>
+          ) : null}
           <video
             className="aspect-[9/16] w-full max-w-sm rounded-md border border-neutral-200 bg-black"
             controls

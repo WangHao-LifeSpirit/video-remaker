@@ -55,6 +55,7 @@ export type TaskExportPaths = {
 
 export type VideoRemakeTask = {
   task_id: string;
+  task_name?: string;
   created_at: string;
   updated_at: string;
   status: StepStatus;

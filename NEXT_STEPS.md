@@ -1,8 +1,8 @@
-# Next Steps After v2.0
+# Next Steps After v2.1
 
-本文档记录 v2.0 之后的产品开发路线。v2.0 已完成本地网页端工作台、LLM Provider 分析、Seedance 片段生成、FFmpeg 成片、字幕烧录、后台 job、页面轮询、视频预览、下载、输入材料管理、链接识别和成片资产管理。
+本文档记录 v2.1 之后的产品开发路线。v2.1 已完成本地网页端工作台、LLM Provider 分析、Seedance 片段生成、FFmpeg 成片、字幕烧录、后台 job、页面轮询、视频预览、安全的模型设置和 macOS 一键启动。
 
-## 已完成到 v1.4
+## 已完成到 v2.1
 
 - 页面内 `final.mp4` 预览播放器。
 - 后台 job 执行。

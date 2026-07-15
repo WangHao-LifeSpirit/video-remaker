@@ -31,8 +31,11 @@ type KlingConfig = {
   accessKey: string;
   secretKey: string;
   baseUrl: string;
+  mode: "omni" | "text2video" | "image2video";
   modelName: string;
   endpointPath: string;
+  text2videoEndpointPath: string;
+  image2videoEndpointPath: string;
   maxRetryPerScene: number;
 };
 
@@ -77,6 +80,13 @@ export type KlingAuthCheckResult = {
       present: boolean;
       value: string;
       is_official_singapore_domain: boolean;
+      is_official_china_domain: boolean;
+      has_leading_or_trailing_space: boolean;
+    };
+    KLING_MODE: {
+      present: boolean;
+      value: string;
+      is_supported_mode: boolean;
       has_leading_or_trailing_space: boolean;
     };
     KLING_MODEL_NAME: {
@@ -85,6 +95,20 @@ export type KlingAuthCheckResult = {
       has_leading_or_trailing_space: boolean;
     };
     KLING_ENDPOINT_PATH: {
+      present: boolean;
+      value: string;
+      has_leading_slash: boolean;
+      is_video_generation_endpoint: boolean;
+      has_leading_or_trailing_space: boolean;
+    };
+    KLING_TEXT2VIDEO_ENDPOINT_PATH: {
+      present: boolean;
+      value: string;
+      has_leading_slash: boolean;
+      is_video_generation_endpoint: boolean;
+      has_leading_or_trailing_space: boolean;
+    };
+    KLING_IMAGE2VIDEO_ENDPOINT_PATH: {
       present: boolean;
       value: string;
       has_leading_slash: boolean;
@@ -161,6 +185,14 @@ function trimTrailingSlash(value: string): string {
 
 function ensureLeadingSlash(value: string): string {
   return value.startsWith("/") ? value : `/${value}`;
+}
+
+function getSupportedKlingMode(value: string | undefined): KlingConfig["mode"] {
+  const mode = (value ?? "omni").trim().toLowerCase();
+  if (mode === "text2video" || mode === "image2video" || mode === "omni") {
+    return mode;
+  }
+  return "omni";
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -281,18 +313,24 @@ export async function inspectKlingAuthConfig(): Promise<KlingAuthCheckResult> {
   await loadDotEnvOnce();
   const rawEnv = await readRawEnvValues();
 
-  const rawAccessKey = rawEnv.KLING_ACCESS_KEY ?? process.env.KLING_ACCESS_KEY ?? "";
-  const rawSecretKey = rawEnv.KLING_SECRET_KEY ?? process.env.KLING_SECRET_KEY ?? "";
+  const rawAccessKey = process.env.KLING_ACCESS_KEY ?? rawEnv.KLING_ACCESS_KEY ?? "";
+  const rawSecretKey = process.env.KLING_SECRET_KEY ?? rawEnv.KLING_SECRET_KEY ?? "";
   const accessKey = cleanEnvValue(rawAccessKey);
   const secretKey = cleanEnvValue(rawSecretKey);
   const runtimeAccessKey = process.env.KLING_ACCESS_KEY ?? "";
   const runtimeSecretKey = process.env.KLING_SECRET_KEY ?? "";
-  const baseUrlRaw = rawEnv.KLING_API_BASE_URL ?? process.env.KLING_API_BASE_URL ?? "";
-  const modelNameRaw = rawEnv.KLING_MODEL_NAME ?? process.env.KLING_MODEL_NAME ?? "";
-  const endpointPathRaw = rawEnv.KLING_ENDPOINT_PATH ?? process.env.KLING_ENDPOINT_PATH ?? "";
+  const baseUrlRaw = process.env.KLING_API_BASE_URL ?? rawEnv.KLING_API_BASE_URL ?? "";
+  const modeRaw = process.env.KLING_MODE ?? rawEnv.KLING_MODE ?? "";
+  const modelNameRaw = process.env.KLING_MODEL_NAME ?? rawEnv.KLING_MODEL_NAME ?? "";
+  const endpointPathRaw = process.env.KLING_ENDPOINT_PATH ?? rawEnv.KLING_ENDPOINT_PATH ?? "";
+  const text2videoEndpointPathRaw = process.env.KLING_TEXT2VIDEO_ENDPOINT_PATH ?? rawEnv.KLING_TEXT2VIDEO_ENDPOINT_PATH ?? "";
+  const image2videoEndpointPathRaw = process.env.KLING_IMAGE2VIDEO_ENDPOINT_PATH ?? rawEnv.KLING_IMAGE2VIDEO_ENDPOINT_PATH ?? "";
   const baseUrl = cleanEnvValue(baseUrlRaw);
+  const mode = cleanEnvValue(modeRaw);
   const modelName = cleanEnvValue(modelNameRaw);
   const endpointPath = cleanEnvValue(endpointPathRaw);
+  const text2videoEndpointPath = cleanEnvValue(text2videoEndpointPathRaw);
+  const image2videoEndpointPath = cleanEnvValue(image2videoEndpointPathRaw);
 
   const accessKeyLooksLikeAccessKey = accessKey.startsWith("AK");
   const secretKeyLooksLikeAccessKey = secretKey.startsWith("AK");
@@ -377,7 +415,14 @@ export async function inspectKlingAuthConfig(): Promise<KlingAuthCheckResult> {
         present: baseUrl.length > 0,
         value: baseUrl,
         is_official_singapore_domain: baseUrl === "https://api-singapore.klingai.com",
+        is_official_china_domain: baseUrl === "https://api.klingai.com",
         has_leading_or_trailing_space: baseUrlRaw !== baseUrlRaw.trim()
+      },
+      KLING_MODE: {
+        present: mode.length > 0,
+        value: mode,
+        is_supported_mode: ["omni", "text2video", "image2video"].includes(mode),
+        has_leading_or_trailing_space: modeRaw !== modeRaw.trim()
       },
       KLING_MODEL_NAME: {
         present: modelName.length > 0,
@@ -390,6 +435,20 @@ export async function inspectKlingAuthConfig(): Promise<KlingAuthCheckResult> {
         has_leading_slash: endpointPath.startsWith("/"),
         is_video_generation_endpoint: endpointPath.includes("/videos/"),
         has_leading_or_trailing_space: endpointPathRaw !== endpointPathRaw.trim()
+      },
+      KLING_TEXT2VIDEO_ENDPOINT_PATH: {
+        present: text2videoEndpointPath.length > 0,
+        value: text2videoEndpointPath,
+        has_leading_slash: text2videoEndpointPath.startsWith("/"),
+        is_video_generation_endpoint: text2videoEndpointPath.includes("/videos/"),
+        has_leading_or_trailing_space: text2videoEndpointPathRaw !== text2videoEndpointPathRaw.trim()
+      },
+      KLING_IMAGE2VIDEO_ENDPOINT_PATH: {
+        present: image2videoEndpointPath.length > 0,
+        value: image2videoEndpointPath,
+        has_leading_slash: image2videoEndpointPath.startsWith("/"),
+        is_video_generation_endpoint: image2videoEndpointPath.includes("/videos/"),
+        has_leading_or_trailing_space: image2videoEndpointPathRaw !== image2videoEndpointPathRaw.trim()
       }
     },
     effective_runtime: {
@@ -438,8 +497,11 @@ export async function getKlingConfig(): Promise<KlingConfig> {
     accessKey: process.env.KLING_ACCESS_KEY!,
     secretKey: process.env.KLING_SECRET_KEY!,
     baseUrl: trimTrailingSlash(process.env.KLING_API_BASE_URL!),
-    modelName: process.env.KLING_MODEL_NAME || "kling-video-o1",
+    mode: getSupportedKlingMode(process.env.KLING_MODE),
+    modelName: process.env.KLING_MODEL_NAME || "",
     endpointPath: ensureLeadingSlash(process.env.KLING_ENDPOINT_PATH || "/v1/videos/omni-video"),
+    text2videoEndpointPath: ensureLeadingSlash(process.env.KLING_TEXT2VIDEO_ENDPOINT_PATH || "/v1/videos/text2video"),
+    image2videoEndpointPath: ensureLeadingSlash(process.env.KLING_IMAGE2VIDEO_ENDPOINT_PATH || "/v1/videos/image2video"),
     maxRetryPerScene: parsePositiveInteger(process.env.MAX_RETRY_PER_SCENE, 1)
   };
 }
@@ -512,19 +574,25 @@ async function fetchKlingJson(input: {
 
 export async function submitKlingTextToVideoTask(input: KlingSubmitInput): Promise<KlingSubmitResult> {
   const config = await getKlingConfig();
+  if (config.mode === "image2video") {
+    throw new Error("KLING_MODE=image2video requires image input, which is not connected in this text-prompt POC.");
+  }
+  const endpointPath = config.mode === "text2video" ? config.text2videoEndpointPath : config.endpointPath;
+  const requestBody = {
+    model_name: config.modelName,
+    prompt: input.prompt,
+    negative_prompt: input.negativePrompt ?? "",
+    mode: "pro",
+    aspect_ratio: input.aspectRatio ?? "9:16",
+    duration: normalizeDuration(input.duration),
+    external_task_id: input.externalTaskId ?? "",
+    callback_url: ""
+  };
   const response = await fetchKlingJson({
     config,
     method: "POST",
-    path: config.endpointPath,
-    body: {
-      model_name: config.modelName,
-      prompt: input.prompt,
-      mode: "pro",
-      aspect_ratio: input.aspectRatio ?? "9:16",
-      duration: normalizeDuration(input.duration),
-      external_task_id: input.externalTaskId ?? "",
-      callback_url: ""
-    }
+    path: endpointPath,
+    body: requestBody
   });
   const taskId = getTaskId(response);
   if (!taskId) {
@@ -539,10 +607,16 @@ export async function submitKlingTextToVideoTask(input: KlingSubmitInput): Promi
 
 export async function pollKlingTask(taskId: string): Promise<KlingPollResult> {
   const config = await getKlingConfig();
+  const endpointPath =
+    config.mode === "text2video"
+      ? config.text2videoEndpointPath
+      : config.mode === "image2video"
+        ? config.image2videoEndpointPath
+        : config.endpointPath;
   const response = await fetchKlingJson({
     config,
     method: "GET",
-    path: `${config.endpointPath}/${encodeURIComponent(taskId)}`
+    path: `${endpointPath}/${encodeURIComponent(taskId)}`
   });
   return {
     taskId,

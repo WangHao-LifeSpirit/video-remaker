@@ -4,7 +4,7 @@ export type AssetRecord = {
   asset_id: string;
   scene_id: string;
   type: "mock_video" | "image" | "voiceover" | "subtitle" | "bgm" | "cover" | "placeholder";
-  provider: "mock" | "kling" | "luma" | "seedance" | "tts" | "volcengine" | "openai" | "elevenlabs" | "asr" | "ffmpeg";
+  provider: "mock" | "kling" | "seedance" | "tts" | "volcengine" | "openai" | "elevenlabs" | "asr" | "ffmpeg";
   file_path?: string;
   remote_task_id?: string;
   remote_url?: string;

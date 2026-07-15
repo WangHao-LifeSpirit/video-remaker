@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
 import { generateVoiceoverForTask } from "../../../../../lib/tools/voiceover-generator";
 
-export async function POST(_request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(_request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
-    const voiceover = await generateVoiceoverForTask(params.taskId);
+    const voiceover = await generateVoiceoverForTask(taskId);
     return NextResponse.json({
-      task_id: params.taskId,
+      task_id: taskId,
       status: voiceover.status,
       provider: voiceover.provider,
       language: voiceover.language,
       segment_count: voiceover.segments.length,
       total_duration_seconds: voiceover.total_duration_seconds,
-      voiceover_script_path: `data/tasks/${params.taskId}/voiceover_script.json`
+      voiceover_script_path: `data/tasks/${taskId}/voiceover_script.json`
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to generate voiceover script.";

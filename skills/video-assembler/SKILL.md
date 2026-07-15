@@ -2,30 +2,31 @@
 video-assembler
 
 # Description
-Reserve or execute final video assembly from assets, captions, voiceover, BGM, and cover.
+Assemble a playable final video from real and/or clearly marked Mock assets, captions, and audio.
 
 # When to use
 Use after assets and timeline are ready.
 
 # Inputs
 - `assets.json`
-- Future generated video clips, audio, subtitles, and cover.
+- Generated or Mock video clips, audio, subtitles, and cover.
 
 # Workflow
 1. Read asset manifest and timeline.
-2. In v0.1, update assemble status to `mocked` and reserve MP4 path.
-3. In v0.3, call FFmpeg, MoviePy, or Remotion to assemble real MP4.
-4. Write final output path into `task.json`.
+2. Verify every referenced local asset exists and is readable.
+3. Normalize scene clips and call FFmpeg to assemble `final.mp4`.
+4. Preserve `mocked` status when any required scene remains a Mock fallback.
+5. Write final output path and assembly truth into `task.json` and `assets.json`.
 
 # Output format
 Updated `assets.json` and `task.export_paths.mp4`.
 
 # Safety rules
-- Do not claim MP4 exists in v0.1.
+- Do not report a mixed or Mock timeline as a fully real generated video.
 - Do not use unauthorized source footage.
 
 # Related CLI command
 `video-maker assemble --task <task_id>`
 
 # Failure handling
-If required real assets are missing in v0.3, stop before assembly and list missing assets.
+If required assets are missing or FFmpeg fails, stop, record the error, and preserve existing outputs.

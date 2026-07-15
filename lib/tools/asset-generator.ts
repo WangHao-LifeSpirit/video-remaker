@@ -1,7 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { submitKlingTextToVideoTask, waitForKlingTask } from "../api-clients/kling-client";
-import { submitLumaVideoGeneration, waitForLumaGeneration } from "../api-clients/luma-client";
 import { submitSeedanceTextToVideoTask, waitForSeedanceTask } from "../api-clients/seedance-client";
 import type { AssetsManifest } from "../types/assets";
 import type { RemakePlan } from "../types/remake-plan";
@@ -16,7 +16,7 @@ import {
   toProjectRelativePath,
   writeTaskArtifact
 } from "./task-store";
-import { assertKlingSingleSceneAllowed, assertLumaSingleSceneAllowed, assertSeedanceScenesAllowed } from "./cost-guard";
+import { assertKlingSingleSceneAllowed, assertSeedanceScenesAllowed } from "./cost-guard";
 import { runFfprobe } from "./ffmpeg";
 import { generateMockSceneVideo, getMockSceneVideoPath } from "./video-generator";
 
@@ -169,14 +169,33 @@ async function writeAssetsAndTask(input: {
 async function downloadVideo(input: {
   url: string;
   outputPath: string;
+  provider: "kling" | "seedance";
 }): Promise<void> {
   const response = await fetch(input.url);
   if (!response.ok) {
-    throw new Error(`Kling video download failed with HTTP ${response.status}.`);
+    throw new Error(`${input.provider} video download failed with HTTP ${response.status}.`);
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!response.body) {
+    throw new Error(`${input.provider} video download returned an empty response body.`);
+  }
   await mkdir(path.dirname(input.outputPath), { recursive: true });
-  await writeFile(input.outputPath, bytes);
+  const tempPath = `${input.outputPath}.${process.pid}.${randomUUID()}.downloading`;
+  const handle = await open(tempPath, "w");
+  try {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await handle.write(value);
+    }
+    await handle.close();
+    await rename(tempPath, input.outputPath);
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+  }
 }
 
 function klingDurationForCall(value: string): {
@@ -232,8 +251,10 @@ async function runKlingSingleScene(input: {
 
   if (!guard.allowed) {
     input.assets.errors.push(guard.error);
-    firstAsset.generation_note = guard.note;
-    firstAsset.description = `${firstAsset.description} ${guard.note}`;
+    if (firstAsset.provider === "mock" || firstAsset.generation_status !== "success") {
+      firstAsset.generation_note = guard.note;
+      firstAsset.description = `${firstAsset.description} ${guard.note}`;
+    }
     return writeAssetsAndTask({
       taskId: input.taskId,
       assets: input.assets,
@@ -263,7 +284,8 @@ async function runKlingSingleScene(input: {
     const outputPath = path.join(getTaskDir(input.taskId), "assets", "videos", `${firstKlingPrompt.scene_id}.mp4`);
     await downloadVideo({
       url: completed.videoUrl,
-      outputPath
+      outputPath,
+      provider: "kling"
     });
     await runFfprobe(["-v", "error", "-show_format", "-show_streams", outputPath]);
 
@@ -285,9 +307,15 @@ async function runKlingSingleScene(input: {
         timelineItem.asset_ids = [firstAsset.asset_id];
       }
     }
-    input.assets.status = "success";
+    const hasMockScenes = input.assets.assets.some(
+      (asset) =>
+        (asset.type === "mock_video" || asset.type === "placeholder") &&
+        (asset.provider === "mock" || asset.generation_status === "mocked")
+    );
+    input.assets.status = hasMockScenes ? "mocked" : "success";
     input.assets.mock = {
-      is_mock: false,
+      is_mock: hasMockScenes,
+      mock_reason: hasMockScenes ? "Kling generated one real scene; remaining scenes still use mock preview clips." : undefined,
       provider: "kling",
       real_provider_reserved: "Kling single-scene video generation"
     };
@@ -309,133 +337,25 @@ async function runKlingSingleScene(input: {
       recoverable: true
     })
   );
-  firstAsset.generation_note = [
-    firstAsset.remote_task_id ? `Kling remote_task_id: ${firstAsset.remote_task_id}.` : undefined,
-    klingDuration.note,
-    "Kling generation failed. Mock asset remains in use. No additional Kling task was submitted."
-  ]
-    .filter(Boolean)
-    .join(" ");
-  firstAsset.provider = "mock";
-  firstAsset.generation_status = "mocked";
-  return writeAssetsAndTask({
-    taskId: input.taskId,
-    assets: input.assets,
-    currentStep: "generate-assets"
-  });
-}
-
-async function runLumaSingleScene(input: {
-  taskId: string;
-  assets: AssetsManifest;
-  prompts: VideoPrompts;
-  sceneLimit: number;
-}): Promise<AssetsManifest> {
-  const guard = await assertLumaSingleSceneAllowed({
-    sceneCount: input.sceneLimit,
-    step: "generate-assets"
-  });
-
-  const firstPrompt = input.prompts.prompts[0];
-  const firstAsset = firstPrompt
-    ? input.assets.assets.find((asset) => asset.scene_id === firstPrompt.scene_id)
-    : undefined;
-
-  if (!firstPrompt || !firstAsset) {
-    input.assets.errors.push(
-      createErrorRecord({
-        step: "generate-assets",
-        message: "No first video prompt or matching asset was found. Falling back to mock assets. No Luma credits were consumed.",
-        code: "LUMA_PROMPT_NOT_FOUND",
-        recoverable: true
-      })
-    );
-    return writeAssetsAndTask({
-      taskId: input.taskId,
-      assets: input.assets,
-      currentStep: "generate-assets"
-    });
+  if (firstAsset.provider === "mock" || firstAsset.generation_status !== "success") {
+    firstAsset.generation_note = [
+      firstAsset.remote_task_id ? `Kling remote_task_id: ${firstAsset.remote_task_id}.` : undefined,
+      klingDuration.note,
+      "Kling generation failed. Mock asset remains in use. No additional Kling task was submitted."
+    ]
+      .filter(Boolean)
+      .join(" ");
+    firstAsset.provider = "mock";
+    firstAsset.generation_status = "mocked";
+  } else {
+    firstAsset.generation_note = [
+      firstAsset.generation_note,
+      klingDuration.note,
+      "Kling generation failed, so the existing successful asset was kept unchanged."
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
-
-  if (!guard.allowed) {
-    input.assets.errors.push(guard.error);
-    firstAsset.generation_note = guard.note;
-    firstAsset.description = `${firstAsset.description} ${guard.note}`;
-    return writeAssetsAndTask({
-      taskId: input.taskId,
-      assets: input.assets,
-      currentStep: "generate-assets"
-    });
-  }
-
-  let lastError: unknown;
-
-  try {
-    const submitted = await submitLumaVideoGeneration({
-      prompt: firstPrompt.prompt,
-      aspectRatio: firstPrompt.aspect_ratio,
-      externalTaskId: `${input.taskId}_${firstPrompt.scene_id}`
-    });
-    firstAsset.remote_task_id = submitted.generationId;
-    const completed = await waitForLumaGeneration({
-      generationId: submitted.generationId
-    });
-    if (!completed.videoUrl) {
-      throw new Error("Luma generation completed but did not return a video URL.");
-    }
-
-    const outputPath = path.join(getTaskDir(input.taskId), "assets", "videos", `${firstPrompt.scene_id}.mp4`);
-    await downloadVideo({
-      url: completed.videoUrl,
-      outputPath
-    });
-    await runFfprobe(["-v", "error", "-show_format", "-show_streams", outputPath]);
-
-    firstAsset.asset_id = `asset_${firstPrompt.scene_id}_luma_video`;
-    firstAsset.provider = "luma";
-    firstAsset.file_path = toProjectRelativePath(outputPath);
-    firstAsset.remote_task_id = completed.generationId;
-    firstAsset.remote_url = undefined;
-    firstAsset.generation_note = "Real Luma video was downloaded locally. Remote result URL was not persisted.";
-    firstAsset.description = `Real Luma generated video for scene ${firstPrompt.scene_id}.`;
-    firstAsset.generation_status = "success";
-    for (const timelineItem of input.assets.timeline) {
-      if (timelineItem.scene_id === firstPrompt.scene_id) {
-        timelineItem.asset_ids = [firstAsset.asset_id];
-      }
-    }
-    input.assets.status = "success";
-    input.assets.mock = {
-      is_mock: false,
-      provider: "luma",
-      real_provider_reserved: "Luma single-scene video generation"
-    };
-    return writeAssetsAndTask({
-      taskId: input.taskId,
-      assets: input.assets,
-      currentStep: "generate-assets"
-    });
-  } catch (error) {
-    lastError = error;
-  }
-
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  input.assets.errors.push(
-    createErrorRecord({
-      step: "generate-assets",
-      message: `Luma single-scene generation failed. Falling back to mock asset. Reason: ${message}`,
-      code: "LUMA_GENERATION_FAILED",
-      recoverable: true
-    })
-  );
-  firstAsset.generation_note = [
-    firstAsset.remote_task_id ? `Luma remote generation id: ${firstAsset.remote_task_id}.` : undefined,
-    "Luma generation failed. Mock asset remains in use. No additional Luma task was submitted."
-  ]
-    .filter(Boolean)
-    .join(" ");
-  firstAsset.provider = "mock";
-  firstAsset.generation_status = "mocked";
   return writeAssetsAndTask({
     taskId: input.taskId,
     assets: input.assets,
@@ -526,7 +446,8 @@ async function generateSeedanceScene(input: {
     const outputPath = path.join(getTaskDir(input.taskId), "assets", "videos", `${input.prompt.scene_id}.mp4`);
     await downloadVideo({
       url: completed.videoUrl,
-      outputPath
+      outputPath,
+      provider: "seedance"
     });
     await runFfprobe(["-v", "error", "-show_format", "-show_streams", outputPath]);
 
@@ -616,9 +537,17 @@ async function runSeedanceScenes(input: {
     (asset) => asset.provider === "seedance" && asset.generation_status === "success"
   );
   if (successfulSeedanceAssets.length > 0) {
-    input.assets.status = "success";
+    const hasMockScenes = input.assets.assets.some(
+      (asset) =>
+        (asset.type === "mock_video" || asset.type === "placeholder") &&
+        (asset.provider === "mock" || asset.generation_status === "mocked")
+    );
+    input.assets.status = hasMockScenes ? "mocked" : "success";
     input.assets.mock = {
-      is_mock: false,
+      is_mock: hasMockScenes,
+      mock_reason: hasMockScenes
+        ? `Seedance generated ${successfulSeedanceAssets.length} real scene(s); remaining scenes still use mock preview clips.`
+        : undefined,
       provider: "seedance",
       real_provider_reserved: `Seedance ${successfulSeedanceAssets.length}-scene video generation`
     };
@@ -632,26 +561,17 @@ async function runSeedanceScenes(input: {
 
 export async function generateAssetsForTask(input: {
   taskId: string;
-  provider: "mock" | "kling" | "luma" | "seedance";
+  provider: "mock" | "kling" | "seedance";
   sceneLimit?: number;
   force?: boolean;
 }): Promise<AssetsManifest> {
-  const existingAssets = input.provider === "seedance" && !input.force ? await readExistingAssetsForTask(input.taskId) : undefined;
+  const existingAssets = input.provider !== "mock" && !input.force ? await readExistingAssetsForTask(input.taskId) : undefined;
   const assets = existingAssets ?? (await generateMockAssetsForTask(input.taskId));
   if (input.provider === "mock") {
     return assets;
   }
 
   const prompts = await readTaskArtifact<VideoPrompts>(input.taskId, "video_prompts.json");
-  if (input.provider === "luma") {
-    return runLumaSingleScene({
-      taskId: input.taskId,
-      assets,
-      prompts,
-      sceneLimit: input.sceneLimit ?? 1
-    });
-  }
-
   if (input.provider === "seedance") {
     return runSeedanceScenes({
       taskId: input.taskId,

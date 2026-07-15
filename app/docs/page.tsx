@@ -12,19 +12,19 @@ const workflow = [
 
 export default function DocsPage() {
   return (
-    <main className="min-h-screen px-5 py-8">
-      <div className="mx-auto grid max-w-4xl gap-6">
+    <main className="workbench-page">
+      <div className="workbench-shell max-w-4xl">
         <header className="grid gap-2">
           <Link className="text-sm font-medium text-neutral-500" href="/">返回首页</Link>
-          <p className="text-sm font-medium text-neutral-500">v2.0 Local Video Remaker Workbench</p>
-          <h1 className="text-3xl font-semibold tracking-normal">使用说明</h1>
+          <p className="page-kicker">v2.1 · USER GUIDE</p>
+          <h1 className="page-title">使用说明</h1>
           <p className="text-sm leading-6 text-neutral-600">
             这是本地运行的短视频复刻自动化工作台。它学习视频结构并生成原创改编内容，不自动下载公开视频，也不绕过平台限制。
           </p>
         </header>
 
-        <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-5">
-          <h2 className="text-lg font-semibold">推荐流程</h2>
+        <section className="paper-panel paper-panel--accent paper-panel--padded grid gap-3">
+          <h2 className="section-title">推荐流程</h2>
           <div className="grid gap-2">
             {workflow.map((item, index) => (
               <div key={item} className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
@@ -35,18 +35,18 @@ export default function DocsPage() {
           </div>
         </section>
 
-        <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-5">
-          <h2 className="text-lg font-semibold">Provider 说明</h2>
+        <section className="paper-panel paper-panel--padded grid gap-3">
+          <h2 className="section-title">模型说明</h2>
           <div className="grid gap-2 text-sm text-neutral-700">
             <p>LLM Provider 负责分析、分镜、改编、prompt 和审稿；可配置 mock / deepseek / openai / claude。</p>
-            <p>Video Provider 负责生成视频片段；稳定链路是 mock / seedance，kling / luma 是实验性架构。</p>
+            <p>Video Provider 负责生成视频片段；稳定链路是 mock / seedance，Kling 仍是实验性架构。</p>
             <p>真实生成需要你自己的 API Key 和成本保护开关；mock 不消耗费用。</p>
-            <p>修改 `.env` 后需要重启本地服务。</p>
+            <p>在“模型设置”页保存会立即生效；如果手动编辑 `.env`，请重启本地服务。</p>
           </div>
         </section>
 
-        <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-5">
-          <h2 className="text-lg font-semibold">更多文档</h2>
+        <section className="paper-panel paper-panel--padded grid gap-3">
+          <h2 className="section-title">更多文档</h2>
           <div className="grid gap-2 text-sm text-neutral-700">
             <p>README.md：安装、配置和完整能力说明。</p>
             <p>USER_GUIDE.md：面向使用者的操作手册。</p>

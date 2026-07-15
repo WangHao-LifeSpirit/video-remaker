@@ -1,6 +1,6 @@
 # User Guide
 
-短视频复刻自动化工作台 v2.0 是本地运行版本。它把文本模型、视频模型和配音模型分开配置：
+短视频复刻自动化工作台 v2.1 是本地运行版本。它把文本模型、视频模型和配音模型分开配置：
 
 - LLM Provider：负责分析、分镜、改编、video prompts 和 Agent review。
 - Video Provider：负责生成视频片段。
@@ -28,6 +28,8 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 ```
+
+DeepSeek 负责文本推理，不会直接查看上传视频的关键帧。只上传视频而没有字幕、文案或画面说明时，系统会暂停以避免生成不相关内容。需要自动理解关键帧时，可额外配置 `OPENAI_API_KEY` 和 `OPENAI_VISION_MODEL`；也可以直接补充原字幕和画面说明。
 
 OpenAI：
 
@@ -64,9 +66,8 @@ Video Provider 区别：
 - `mock`：始终可用，生成本地占位片段，不消耗费用。
 - `seedance`：当前稳定交付链路，用于真实生成视频片段。
 - `kling`：实验性 provider，已有部分 client，但默认不在网页下拉框开放。
-- `luma`：实验性 provider，保留配置，不作为稳定链路。
 
-网页一键生成下拉框默认只显示 `seedance` 和 `mock`。`.env` 中存在 Kling / Luma 配置，并不代表它们会自动成为稳定可用的页面能力。
+网页一键生成下拉框默认只显示 `seedance` 和 `mock`。Kling client 的存在不代表它已经成为稳定可用的页面能力。
 
 TTS Provider：
 
@@ -89,7 +90,7 @@ ENABLE_PAID_TTS_CALLS=false
 
 真实 TTS 必须设置 `ENABLE_PAID_TTS_CALLS=true`。如果配置缺失或成本保护关闭，系统会 fallback 到 mock/silent audio，并记录 “No TTS credits were consumed.”。
 
-修改 `.env` 后，请重启 `npm run dev`。CLI 命令每次运行会重新读取本地环境。
+在设置页保存的配置会立即用于后续操作。若手动编辑 `.env`，请重启 `npm run dev`。CLI 命令每次运行会重新读取本地环境。
 
 ## 配置检查
 
@@ -101,6 +102,8 @@ npm run video-maker -- tts-check
 该命令只显示 Key 是否存在，不显示完整 Key，不调用任何真实 API。
 
 ## 上传原视频
+
+上传完成后无需在下一步重复上传。运行 analyze 或一键生成时，系统会自动读取元信息并抽取覆盖全片的关键帧。输入材料发生变化后，旧的分析、分镜、改编和 prompts 会自动失效并重新生成。
 
 任务详情页的 `原视频 / 输入材料` 区域也支持先输入短视频链接并点击 `解析链接`。
 

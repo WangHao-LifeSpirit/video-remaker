@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ErrorRecord, StepStatus } from "../types/common";
+import type { ErrorRecord, StepStatus, SupportedPlatform } from "../types/common";
 import { createErrorRecord, nowIso } from "../types/common";
 import type { TaskUserInputs, VideoRemakeTask } from "../types/task";
 import { defaultUserInputs } from "../types/task";
@@ -12,9 +12,20 @@ export const TASKS_DIR = path.join(DATA_DIR, "tasks");
 export const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 export const OUTPUTS_DIR = path.join(DATA_DIR, "outputs");
 
+const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function assertSafeStorageId(value: string, label = "id"): string {
+  if (!SAFE_ID_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
 export type CreateTaskInput = Partial<TaskUserInputs> & {
+  task_name?: string;
   original_url?: string;
   upload_path?: string;
+  source_platform?: SupportedPlatform;
 };
 
 export function pickUserInputs(input: Partial<TaskUserInputs>): Partial<TaskUserInputs> {
@@ -42,11 +53,11 @@ export function resolveProjectPath(filePath: string): string {
 }
 
 export function getTaskDir(taskId: string): string {
-  return path.join(TASKS_DIR, taskId);
+  return path.join(TASKS_DIR, assertSafeStorageId(taskId, "task id"));
 }
 
 export function getTaskOutputsDir(taskId: string): string {
-  return path.join(OUTPUTS_DIR, taskId);
+  return path.join(OUTPUTS_DIR, assertSafeStorageId(taskId, "task id"));
 }
 
 export function getTaskJsonPath(taskId: string): string {
@@ -67,9 +78,19 @@ export async function readJsonFile<T>(filePath: string): Promise<T> {
 }
 
 export async function writeJsonFile(filePath: string, value: unknown): Promise<string> {
+  return writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+export async function writeTextFile(filePath: string, content: string): Promise<string> {
   const absolutePath = resolveProjectPath(filePath);
   await mkdir(path.dirname(absolutePath), { recursive: true });
-  await writeFile(absolutePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const tempPath = `${absolutePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tempPath, content, "utf8");
+    await rename(tempPath, absolutePath);
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+  }
   return toProjectRelativePath(absolutePath);
 }
 
@@ -77,8 +98,10 @@ export async function createTask(input: CreateTaskInput = {}): Promise<VideoRema
   await ensureProjectDirs();
   const taskId = `task_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
   const createdAt = nowIso();
+  const taskName = input.task_name?.trim().slice(0, 80);
   const task: VideoRemakeTask = {
     task_id: taskId,
+    task_name: taskName || undefined,
     created_at: createdAt,
     updated_at: createdAt,
     status: "pending",
@@ -87,6 +110,7 @@ export async function createTask(input: CreateTaskInput = {}): Promise<VideoRema
       input_type: input.original_url && input.upload_path ? "mixed" : input.original_url ? "url" : input.upload_path ? "upload" : "manual",
       original_url: input.original_url,
       upload_path: input.upload_path,
+      platform: input.source_platform,
       parse_status: input.original_url ? "pending" : "needs_user_input"
     },
     user_inputs: {

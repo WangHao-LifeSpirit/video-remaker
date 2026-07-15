@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { extractFramesForTask } from "../../../../../lib/tools/frame-extractor";
 
-export async function POST(request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const body = await request.json().catch(() => ({})) as {
       max?: number;
     };
     const result = await extractFramesForTask({
-      taskId: params.taskId,
+      taskId,
       maxFrames: body.max ?? 8
     });
     return NextResponse.json(result);

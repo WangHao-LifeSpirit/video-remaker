@@ -50,8 +50,16 @@ export async function extractFramesForTask(input: {
 
   const frameDir = path.join(getTaskDir(input.taskId), "assets", "source-frames");
   await mkdir(frameDir, { recursive: true });
-  const duration = sourceVideo.duration_seconds ?? maxFrames * intervalSeconds;
-  const timestamps = Array.from({ length: maxFrames }, (_, index) => Math.min(index * intervalSeconds, Math.max(duration - 0.1, 0)));
+  const duration = sourceVideo.duration_seconds;
+  const timestamps = duration && duration > 0
+    ? (() => {
+        const frameCount = Math.min(maxFrames, Math.max(1, Math.ceil(duration / intervalSeconds)));
+        const spacing = duration / frameCount;
+        return Array.from({ length: frameCount }, (_, index) =>
+          Math.min((index + 0.5) * spacing, Math.max(duration - 0.1, 0))
+        );
+      })()
+    : Array.from({ length: maxFrames }, (_, index) => index * intervalSeconds);
   const uniqueTimestamps = Array.from(new Set(timestamps.map((value) => Number(value.toFixed(3)))));
   const frames: SourceFramesArtifact["frames"] = [];
 
@@ -84,7 +92,7 @@ export async function extractFramesForTask(input: {
     source_video_path: sourcePath,
     frames,
     max_frames: maxFrames,
-    interval_seconds: intervalSeconds,
+    interval_seconds: duration && frames.length > 0 ? Number((duration / frames.length).toFixed(3)) : intervalSeconds,
     errors: []
   };
   const { relativePath } = await writeTaskArtifact(input.taskId, "source_frames.json", artifact);

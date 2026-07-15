@@ -31,11 +31,17 @@ export async function assertKlingSingleSceneAllowed(input: {
   if (!process.env.KLING_ACCESS_KEY) missingOrInvalid.push("KLING_ACCESS_KEY is missing");
   if (!process.env.KLING_SECRET_KEY) missingOrInvalid.push("KLING_SECRET_KEY is missing");
   if (!process.env.KLING_API_BASE_URL) missingOrInvalid.push("KLING_API_BASE_URL is missing");
+  if (process.env.KLING_API_BASE_URL !== "https://api.klingai.com") missingOrInvalid.push("KLING_API_BASE_URL must be https://api.klingai.com for domestic Kling API");
+  if (!process.env.KLING_MODE) missingOrInvalid.push("KLING_MODE is missing");
   if (!process.env.KLING_MODEL_NAME) missingOrInvalid.push("KLING_MODEL_NAME is missing");
-  if (!process.env.KLING_ENDPOINT_PATH) missingOrInvalid.push("KLING_ENDPOINT_PATH is missing");
+  if (process.env.KLING_MODE === "omni" && !process.env.KLING_ENDPOINT_PATH) missingOrInvalid.push("KLING_ENDPOINT_PATH is missing for KLING_MODE=omni");
+  if (process.env.KLING_MODE === "text2video" && !process.env.KLING_TEXT2VIDEO_ENDPOINT_PATH) missingOrInvalid.push("KLING_TEXT2VIDEO_ENDPOINT_PATH is missing for KLING_MODE=text2video");
+  if (process.env.KLING_MODE === "image2video" && !process.env.KLING_IMAGE2VIDEO_ENDPOINT_PATH) missingOrInvalid.push("KLING_IMAGE2VIDEO_ENDPOINT_PATH is missing for KLING_MODE=image2video");
+  if (process.env.KLING_MODE && !["omni", "text2video", "image2video"].includes(process.env.KLING_MODE)) missingOrInvalid.push("KLING_MODE must be omni, text2video, or image2video");
   if (process.env.ENABLE_PAID_API_CALLS !== "true") missingOrInvalid.push("ENABLE_PAID_API_CALLS must be true");
   if (input.sceneCount !== 1) missingOrInvalid.push("scene count must equal 1");
   if (input.sceneCount > maxScenes) missingOrInvalid.push(`scene count exceeds MAX_VIDEO_SCENES_PER_RUN=${maxScenes}`);
+  if (maxScenes !== 1) missingOrInvalid.push("MAX_VIDEO_SCENES_PER_RUN must be 1 for Kling POC");
 
   if (missingOrInvalid.length > 0) {
     const note = `Kling real generation was blocked by cost guard. No Kling credits were consumed. Reasons: ${missingOrInvalid.join("; ")}.`;
@@ -54,43 +60,6 @@ export async function assertKlingSingleSceneAllowed(input: {
   return {
     allowed: true,
     note: "Kling real generation is allowed for exactly one scene by current cost guard settings."
-  };
-}
-
-export async function assertLumaSingleSceneAllowed(input: {
-  sceneCount: number;
-  step?: string;
-}): Promise<CostGuardResult> {
-  await loadDotEnvOnce();
-
-  const missingOrInvalid: string[] = [];
-  const maxScenes = parsePositiveInteger(process.env.MAX_VIDEO_SCENES_PER_RUN, 1);
-
-  if (process.env.VIDEO_PROVIDER !== "luma") missingOrInvalid.push("VIDEO_PROVIDER must be luma");
-  if (!process.env.LUMA_API_KEY) missingOrInvalid.push("LUMA_API_KEY is missing");
-  if (!process.env.LUMA_API_BASE_URL) missingOrInvalid.push("LUMA_API_BASE_URL is missing");
-  if (!process.env.LUMA_MODEL) missingOrInvalid.push("LUMA_MODEL is missing");
-  if (process.env.ENABLE_PAID_API_CALLS !== "true") missingOrInvalid.push("ENABLE_PAID_API_CALLS must be true");
-  if (input.sceneCount !== 1) missingOrInvalid.push("scene count must equal 1");
-  if (input.sceneCount > maxScenes) missingOrInvalid.push(`scene count exceeds MAX_VIDEO_SCENES_PER_RUN=${maxScenes}`);
-
-  if (missingOrInvalid.length > 0) {
-    const note = `Luma real generation was blocked by cost guard. No Luma credits were consumed. Reasons: ${missingOrInvalid.join("; ")}.`;
-    return {
-      allowed: false,
-      note,
-      error: createErrorRecord({
-        step: input.step ?? "generate-assets",
-        message: note,
-        code: "LUMA_COST_GUARD_BLOCKED",
-        recoverable: true
-      })
-    };
-  }
-
-  return {
-    allowed: true,
-    note: "Luma real generation is allowed for exactly one scene by current cost guard settings."
   };
 }
 

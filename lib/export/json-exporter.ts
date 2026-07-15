@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { VideoAnalysis } from "../types/analysis";
 import type { AssetsManifest } from "../types/assets";
@@ -11,8 +10,8 @@ import {
   getTaskOutputsDir,
   readTaskArtifact,
   saveTask,
-  setTaskStatus,
-  toProjectRelativePath
+  toProjectRelativePath,
+  writeJsonFile
 } from "../tools/task-store";
 
 export async function exportJsonForTask(taskId: string): Promise<string> {
@@ -20,7 +19,7 @@ export async function exportJsonForTask(taskId: string): Promise<string> {
   const outputDir = getTaskOutputsDir(taskId);
   const outputPath = path.join(outputDir, "project-package.json");
   task.export_paths.json = toProjectRelativePath(outputPath);
-  setTaskStatus(task, "success", "export-json");
+  task.current_step = "export-json";
 
   const projectPackage = {
     task,
@@ -32,8 +31,7 @@ export async function exportJsonForTask(taskId: string): Promise<string> {
     assets: await readTaskArtifact<AssetsManifest>(taskId, "assets.json")
   };
 
-  await mkdir(outputDir, { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(projectPackage, null, 2)}\n`, "utf8");
+  await writeJsonFile(outputPath, projectPackage);
   await saveTask(task);
   return task.export_paths.json;
 }

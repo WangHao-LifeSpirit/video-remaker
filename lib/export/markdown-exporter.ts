@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { VideoAnalysis } from "../types/analysis";
 import type { AssetsManifest } from "../types/assets";
@@ -10,8 +9,8 @@ import {
   getTaskOutputsDir,
   readTaskArtifact,
   saveTask,
-  setTaskStatus,
-  toProjectRelativePath
+  toProjectRelativePath,
+  writeTextFile
 } from "../tools/task-store";
 
 function list(items: string[]): string {
@@ -28,14 +27,20 @@ export async function exportMarkdownForTask(taskId: string): Promise<string> {
   const realLlmProviders = Array.from(
     new Set([analysis.mock, storyboard.mock, remake.mock, prompts.mock].map((mock) => mock.provider).filter(Boolean))
   );
-  const providerNote = realLlmProviders.length
-    ? `Real LLM mode was used for one or more analysis/planning artifacts. Provider: ${realLlmProviders.join(", ")}. Kling / Seedance / TTS / ASR were not called.`
-    : "未调用真实 OpenAI / Kling / Seedance / TTS / ASR。";
+  const videoAssets = assets.assets.filter((asset) => asset.type === "mock_video");
+  const realVideoProviders = Array.from(
+    new Set(videoAssets.filter((asset) => asset.provider !== "mock").map((asset) => asset.provider))
+  );
+  const mockVideoCount = videoAssets.filter((asset) => asset.provider === "mock").length;
+  const providerNote = `LLM：${realLlmProviders.length ? realLlmProviders.join(", ") : "mock"}；视频片段：${
+    realVideoProviders.length ? realVideoProviders.join(", ") : "无真实 provider"
+  }；Mock 占位片段：${mockVideoCount} 个。`;
 
   const content = `# 短视频原创改编制作包
 
 > 任务 ID：${task.task_id}
-> Provider 标记：${providerNote} 若已执行 assemble，MP4 是由 FFmpeg 使用 mock 占位素材合成。
+> Provider 标记：${providerNote}
+> 真实性：${assets.mock.is_mock ? "当前含 Mock 占位素材，只能作为流程预览。" : "当前素材清单未标记 Mock 占位片段。"}
 
 ## 1. 原视频信息
 - 输入类型：${task.source.input_type}
@@ -128,11 +133,10 @@ ${list([...analysis.risk_notes, ...remake.risk_notes, ...remake.quality_check.su
 `;
 
   const outputDir = getTaskOutputsDir(taskId);
-  await mkdir(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, "production-package.md");
-  await writeFile(outputPath, content, "utf8");
+  await writeTextFile(outputPath, content);
   task.export_paths.markdown = toProjectRelativePath(outputPath);
-  setTaskStatus(task, "success", "export-markdown");
+  task.current_step = "export-markdown";
   await saveTask(task);
   return task.export_paths.markdown;
 }

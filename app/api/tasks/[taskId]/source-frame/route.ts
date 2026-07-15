@@ -7,14 +7,15 @@ function isAllowedFrame(value: string | null): value is string {
   return Boolean(value && /^frame_\d{3}\.jpg$/.test(value));
 }
 
-export async function GET(request: Request, { params }: { params: { taskId: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const url = new URL(request.url);
     const file = url.searchParams.get("file");
     if (!isAllowedFrame(file)) {
       return NextResponse.json({ error: "Unsupported source frame." }, { status: 400 });
     }
-    const frameDir = path.join(getTaskDir(params.taskId), "assets", "source-frames");
+    const frameDir = path.join(getTaskDir(taskId), "assets", "source-frames");
     const filePath = path.join(frameDir, file);
     if (!filePath.startsWith(frameDir)) {
       return NextResponse.json({ error: "Invalid source frame path." }, { status: 400 });

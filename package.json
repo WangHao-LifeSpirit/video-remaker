@@ -1,19 +1,28 @@
 {
   "name": "video-remaker",
-  "version": "2.0.0",
+  "version": "2.1.0",
+  "description": "Local-first workbench for turning authorized source material into an original short-video production workflow.",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WangHao-LifeSpirit/video-remaker.git"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "NEXT_DIST_DIR=.next-dev next dev",
+    "build": "NEXT_DIST_DIR=.next-build next build",
+    "start": "NEXT_DIST_DIR=.next-build next start",
     "typecheck": "tsc --noEmit",
     "video-maker": "node --import tsx cli/video-maker.ts"
   },
   "dependencies": {
     "@types/node": "^20.14.10",
     "commander": "^12.1.0",
-    "next": "^14.2.4",
+    "next": "^16.2.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsx": "^4.16.2",
@@ -25,5 +34,8 @@
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.4"
+  },
+  "overrides": {
+    "postcss": "$postcss"
   }
 }

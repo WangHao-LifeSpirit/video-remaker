@@ -1,10 +1,8 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { listJobsForTask } from "../../../../../lib/tools/job-store";
+import { JOB_STALE_AFTER_MS, listJobsForTask } from "../../../../../lib/tools/job-store";
 import { getTaskOutputsDir } from "../../../../../lib/tools/task-store";
-
-const STALE_AFTER_MS = 30 * 60 * 1000;
 
 async function hasFinalMp4(taskId: string): Promise<boolean> {
   try {
@@ -20,15 +18,16 @@ function isPossiblyStuck(updatedAt: string): boolean {
   if (!Number.isFinite(updatedTime)) {
     return false;
   }
-  return Date.now() - updatedTime > STALE_AFTER_MS;
+  return Date.now() - updatedTime > JOB_STALE_AFTER_MS;
 }
 
-export async function GET(_request: Request, { params }: { params: { taskId: string } }) {
-  const jobs = await listJobsForTask(params.taskId, 20);
-  const finalMp4Exists = await hasFinalMp4(params.taskId);
+export async function GET(_request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
+  const jobs = await listJobsForTask(taskId, 20);
+  const finalMp4Exists = await hasFinalMp4(taskId);
 
   return NextResponse.json({
-    task_id: params.taskId,
+    task_id: taskId,
     jobs: jobs.map((job) => ({
       job_id: job.job_id,
       task_id: job.task_id,

@@ -1,9 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
-import { runFullMockPipeline } from "../../../lib/agents/orchestrator";
-import { createTask, toProjectRelativePath, UPLOADS_DIR } from "../../../lib/tools/task-store";
-import type { RemakeStrength } from "../../../lib/types/common";
+import { parseSourceLinkForTask } from "../../../lib/tools/link-parser";
+import { saveSourceNotesForTask, uploadSourceVideoForTask } from "../../../lib/tools/source-input";
+import { createTask, getTask } from "../../../lib/tools/task-store";
+import type { RemakeStrength, SupportedPlatform } from "../../../lib/types/common";
 
 function getString(formData: FormData, key: string, fallback = ""): string {
   const value = formData.get(key);
@@ -13,46 +12,46 @@ function getString(formData: FormData, key: string, fallback = ""): string {
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
-    const url = getString(formData, "url");
+    const url = getString(formData, "url").trim();
+    const textNotes = getString(formData, "text_notes");
+    const transcript = getString(formData, "transcript");
+    const screenshotNotes = getString(formData, "screenshot_notes");
     const task = await createTask({
+      task_name: getString(formData, "task_name").trim() || undefined,
       original_url: url || undefined,
+      source_platform: getString(formData, "platform", "unknown") as SupportedPlatform,
       target_platform: getString(formData, "target_platform", "douyin"),
       duration: getString(formData, "duration", "30s"),
       style: getString(formData, "style", "clean, fast-paced, creator-style short video"),
       remake_strength: getString(formData, "remake_strength", "medium") as RemakeStrength,
       is_original_remake: formData.get("is_original_remake") === "on",
-      text_notes: getString(formData, "text_notes"),
-      transcript: getString(formData, "transcript"),
-      screenshot_notes: getString(formData, "screenshot_notes")
+      text_notes: textNotes,
+      transcript,
+      screenshot_notes: screenshotNotes
     });
 
-    let uploadPath: string | undefined;
-    const upload = formData.get("upload");
-    if (upload instanceof File && upload.size > 0) {
-      const uploadDir = path.join(UPLOADS_DIR, task.task_id);
-      await mkdir(uploadDir, { recursive: true });
-      const safeName = upload.name.replace(/[^\w.-]+/g, "_");
-      const destination = path.join(uploadDir, safeName || "upload.bin");
-      await writeFile(destination, Buffer.from(await upload.arrayBuffer()));
-      uploadPath = toProjectRelativePath(destination);
+    if (url) {
+      await parseSourceLinkForTask(task.task_id, url);
     }
 
-    const updatedTask = await runFullMockPipeline(task.task_id, {
-      url: url || undefined,
-      upload: uploadPath,
-      target_platform: task.user_inputs.target_platform,
-      duration: task.user_inputs.duration,
-      style: task.user_inputs.style,
-      remake_strength: task.user_inputs.remake_strength,
-      is_original_remake: task.user_inputs.is_original_remake,
-      text_notes: task.user_inputs.text_notes,
-      transcript: task.user_inputs.transcript,
-      screenshot_notes: task.user_inputs.screenshot_notes,
-      assemble: true,
-      export: true
-    });
+    const upload = formData.get("upload");
+    if (upload instanceof File && upload.size > 0) {
+      await uploadSourceVideoForTask({
+        taskId: task.task_id,
+        file: upload
+      });
+    }
 
-    return NextResponse.json(updatedTask);
+    if (textNotes || transcript || screenshotNotes) {
+      await saveSourceNotesForTask({
+        taskId: task.task_id,
+        source_caption: textNotes,
+        source_transcript: transcript,
+        screenshot_notes: screenshotNotes
+      });
+    }
+
+    return NextResponse.json(await getTask(task.task_id));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create task.";
     return NextResponse.json({ error: message }, { status: 500 });

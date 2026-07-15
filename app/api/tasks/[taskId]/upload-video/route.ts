@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { uploadSourceVideoForTask } from "../../../../../lib/tools/source-input";
+import { SourceVideoUploadError, uploadSourceVideoForTask } from "../../../../../lib/tools/source-input";
 
-export async function POST(request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const formData = await request.formData();
     const file = formData.get("video");
@@ -9,17 +10,18 @@ export async function POST(request: Request, { params }: { params: { taskId: str
       return NextResponse.json({ error: "No video file uploaded." }, { status: 400 });
     }
     const artifact = await uploadSourceVideoForTask({
-      taskId: params.taskId,
+      taskId,
       file
     });
     return NextResponse.json({
-      task_id: params.taskId,
+      task_id: taskId,
       status: artifact.status,
       uploaded_video: artifact.uploaded_video,
-      input_json_path: `data/tasks/${params.taskId}/input.json`
+      input_json_path: `data/tasks/${taskId}/input.json`
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to upload video.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = error instanceof SourceVideoUploadError ? error.statusCode : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

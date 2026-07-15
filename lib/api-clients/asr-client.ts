@@ -14,5 +14,5 @@ export async function transcribeAudio(filePath: string): Promise<{ mode: ClientM
   if (!process.env.ASR_API_KEY) {
     throw new Error("ASR_API_KEY is required when MOCK_MODE=false.");
   }
-  throw new Error("Real ASR integration is reserved for v0.2.");
+  throw new Error("Real ASR integration is not available in the current stable release.");
 }

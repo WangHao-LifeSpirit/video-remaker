@@ -32,6 +32,7 @@ type RuntimeStatus = {
   paid_api_calls: boolean;
   max_video_scenes_per_run: number;
   enable_paid_api_calls_raw: string;
+  vision_input_available: boolean;
 };
 
 type TaskSummary = {
@@ -86,6 +87,16 @@ type JobHistoryItem = {
 
 const visibleSteps = ["analyze", "storyboard", "remake", "prompts", "generate-assets", "assemble", "export"];
 
+const stepLabels: Record<string, string> = {
+  analyze: "分析原片",
+  storyboard: "生成分镜",
+  remake: "原创改编",
+  prompts: "生成提示词",
+  "generate-assets": "生成视频片段",
+  assemble: "合成成片",
+  export: "导出制作包"
+};
+
 function dryRunStepState(step: string, result?: RunFullResult): "pending" | "done" | "skipped" | "planned" {
   if (!result) return "pending";
   const entries = result.steps ?? [];
@@ -124,7 +135,7 @@ export function RunFullPanel({
   showJobHistory?: boolean;
 }) {
   const router = useRouter();
-  const [provider, setProvider] = useState(runtime.video_provider === "seedance" ? "seedance" : "seedance");
+  const [provider, setProvider] = useState(runtime.video_provider === "mock" ? "mock" : "seedance");
   const [sceneLimit, setSceneLimit] = useState(Math.min(3, runtime.max_video_scenes_per_run));
   const [assemble, setAssemble] = useState(true);
   const [shouldExport, setShouldExport] = useState(true);
@@ -289,21 +300,27 @@ export function RunFullPanel({
   const canRun = busy === "idle" && !jobIsActive;
 
   return (
-    <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold">Step 3：视频生成与合成</h2>
-        <p className="text-sm text-neutral-600">确认 provider、scene-limit 和成本保护后，使用 dry-run 预估或启动后台一键生成。</p>
+        <p className="section-kicker">STEP 3 · GENERATION</p>
+        <h2 className="section-title">视频生成与合成</h2>
+        <p className="text-sm text-neutral-600">先运行生成前检查，再启动后台任务。已完成的片段默认复用，避免重复花费。</p>
         <p className="text-sm text-neutral-600">
           当前 LLM Provider：{runtime.llm_provider}；当前 Video Provider：{provider}；scene-limit：{sceneLimit}；付费 API：{runtime.paid_api_calls ? "已开启" : "已关闭"}
         </p>
         <div className="grid gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600">
           <p>LLM Provider 影响分析、分镜、改编、prompt 和 review。</p>
           <p>Video Provider 影响视频片段生成；mock 不消耗费用，seedance 是当前稳定交付链路。</p>
-          <p>实验性 provider：kling 已有部分 client 但未稳定验收；luma 预留配置，未作为稳定链路。</p>
+          <p>需要切换 Provider、填写 Key 或一键测试连接，请到 <a className="underline" href="/settings">设置页</a>。</p>
         </div>
         {jobIsActive ? (
           <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
             任务运行中：{activeJob.job_id}；当前步骤：{activeJob.current_step}；最近更新：{activeJob.updated_at ?? "等待刷新"}
+          </p>
+        ) : null}
+        {jobIsActive && activeJob.current_step === "generate-assets" ? (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            视频片段生成通常需要几分钟。请等这个步骤完成后再看 Step 5 预览；已成功的 scene 默认会复用，不需要重复点击。
           </p>
         ) : null}
         {paidDisabled ? (
@@ -315,7 +332,7 @@ export function RunFullPanel({
 
       <div className="grid gap-4 md:grid-cols-3">
         <label className="grid gap-2 text-sm font-medium">
-          Provider
+          视频模型
           <select
             value={provider}
             onChange={(event) => setProvider(event.target.value)}
@@ -326,20 +343,22 @@ export function RunFullPanel({
           </select>
         </label>
         <label className="grid gap-2 text-sm font-medium">
-          Scene limit
+          {provider === "mock" ? "Mock 预览范围" : "本次真实生成场景数"}
           <input
             type="number"
             min={1}
             max={runtime.max_video_scenes_per_run}
             value={sceneLimit}
             onChange={(event) => setSceneLimit(Number(event.target.value))}
-            className="h-10 rounded-md border border-neutral-300 bg-white px-3 font-normal"
+            disabled={provider === "mock"}
+            className="h-10 rounded-md border border-neutral-300 bg-white px-3 font-normal disabled:bg-neutral-100 disabled:text-neutral-500"
           />
+          {provider === "mock" ? <span className="text-xs font-normal text-neutral-500">Mock 会为完整分镜生成占位片段，不受付费场景上限影响。</span> : null}
         </label>
         <div className="grid gap-2 text-sm font-medium">
-          上限
+          成本保护上限
           <p className="flex h-10 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 font-normal text-neutral-700">
-            {runtime.max_video_scenes_per_run} scenes
+            {provider === "mock" ? "Mock 不产生付费调用" : `最多 ${runtime.max_video_scenes_per_run} 个场景`}
           </p>
         </div>
       </div>
@@ -355,7 +374,7 @@ export function RunFullPanel({
         </label>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
-          Force
+          强制重新生成
         </label>
       </div>
 
@@ -366,7 +385,7 @@ export function RunFullPanel({
           onClick={() => submit(true)}
           className="h-10 rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium disabled:opacity-60"
         >
-          {busy === "dry-run" ? "预估中..." : "Dry-run 预估"}
+          {busy === "dry-run" ? "检查中..." : "运行前检查"}
         </button>
         <button
           type="button"
@@ -395,24 +414,22 @@ export function RunFullPanel({
             return (
               <div key={step} className="grid gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm">
                 <div className="flex items-center justify-between">
-                  <span>{step}</span>
+                  <span>{stepLabels[step] ?? step}</span>
                   <span className="text-neutral-600">{statusLabel(state)}</span>
                 </div>
-                {stepMessage ? <p className="text-xs text-red-600">{stepMessage}</p> : null}
+                {stepMessage ? (
+                  <p className={`text-xs ${state === "failed" ? "text-red-600" : state === "skipped" ? "text-neutral-500" : "text-blue-700"}`}>
+                    {stepMessage}
+                  </p>
+                ) : null}
               </div>
             );
           })}
         </div>
       </div>
 
-      {result || job ? (
-        <pre className="max-h-56 overflow-auto rounded-md bg-neutral-950 p-3 text-xs leading-5 text-neutral-100">
-          {JSON.stringify(job ?? result, null, 2)}
-        </pre>
-      ) : null}
-
       <div className="grid gap-2">
-        <h3 className="text-sm font-semibold">下载结果</h3>
+        <h3 className="text-sm font-semibold">本次输出</h3>
         <div className="flex flex-wrap gap-2">
           <a
             className={`rounded-md border px-3 py-2 text-sm font-medium ${outputs.final_mp4 ? "border-neutral-300 bg-white" : "pointer-events-none border-neutral-200 bg-neutral-100 text-neutral-400"}`}

@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { VideoInputArtifact } from "../types/input";
 import { nowIso } from "../types/common";
@@ -7,6 +8,13 @@ import { getTask, readTaskArtifact, saveTask, setTaskStatus, toProjectRelativePa
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const allowedExtensions = new Set([".mp4", ".mov", ".webm"]);
+
+export class SourceVideoUploadError extends Error {
+  constructor(message: string, readonly statusCode: number) {
+    super(message);
+    this.name = "SourceVideoUploadError";
+  }
+}
 
 export function isAllowedUploadVideo(file: File): boolean {
   const extension = path.extname(file.name).toLowerCase();
@@ -36,17 +44,33 @@ export async function uploadSourceVideoForTask(input: {
 }): Promise<VideoInputArtifact> {
   const maxBytes = input.maxBytes ?? MAX_UPLOAD_BYTES;
   if (!isAllowedUploadVideo(input.file)) {
-    throw new Error("Only mp4, mov, and webm uploads are supported.");
+    throw new SourceVideoUploadError("Only mp4, mov, and webm uploads are supported.", 415);
   }
   if (input.file.size > maxBytes) {
-    throw new Error(`Upload is too large. Max size is ${Math.round(maxBytes / 1024 / 1024)}MB.`);
+    throw new SourceVideoUploadError(`Upload is too large. Max size is ${Math.round(maxBytes / 1024 / 1024)}MB.`, 413);
   }
 
   const task = await getTask(input.taskId);
   const uploadDir = path.join(UPLOADS_DIR, input.taskId);
   await mkdir(uploadDir, { recursive: true });
   const destination = path.join(uploadDir, destinationName(input.file));
-  await writeFile(destination, Buffer.from(await input.file.arrayBuffer()));
+  const tempDestination = `${destination}.${process.pid}.${randomUUID()}.uploading`;
+  const handle = await open(tempDestination, "w");
+  try {
+    const reader = input.file.stream().getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await handle.write(value);
+    }
+    await handle.close();
+    await rename(tempDestination, destination);
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  } finally {
+    await rm(tempDestination, { force: true }).catch(() => undefined);
+  }
   const uploadedPath = toProjectRelativePath(destination);
   const existing = await readExistingInput(input.taskId);
   const uploadedVideo = {
@@ -67,6 +91,7 @@ export async function uploadSourceVideoForTask(input: {
       parse_status: task.source.parse_status
     },
     user_inputs: task.user_inputs,
+    source_link: existing?.source_link,
     uploaded_video: uploadedVideo,
     source_transcript: existing?.source_transcript ?? task.user_inputs.transcript ?? "",
     source_caption: existing?.source_caption ?? task.user_inputs.text_notes ?? "",
@@ -113,6 +138,7 @@ export async function saveSourceNotesForTask(input: {
       text_notes: input.source_caption ?? task.user_inputs.text_notes,
       screenshot_notes: input.screenshot_notes ?? task.user_inputs.screenshot_notes
     },
+    source_link: existing?.source_link,
     uploaded_video: existing?.uploaded_video,
     source_transcript: input.source_transcript ?? existing?.source_transcript ?? task.user_inputs.transcript ?? "",
     source_caption: input.source_caption ?? existing?.source_caption ?? task.user_inputs.text_notes ?? "",

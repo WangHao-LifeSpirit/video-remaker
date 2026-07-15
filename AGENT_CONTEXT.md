@@ -1,6 +1,6 @@
 # Agent Context
 
-本项目是 v2.0 本地网页端短视频复刻自动化工作台，目标是“同款结构，原创内容”。系统不自动下载公开视频，不绕过登录、验证码、反爬或平台限制。
+本项目是 v2.1 本地网页端短视频复刻自动化工作台，目标是“同款结构，原创内容”。系统不自动下载公开视频，不绕过登录、验证码、反爬或平台限制。
 
 当前产品入口以网页为主：首页创建任务，任务详情页按 5 步组织输入材料、三 Agent 创作、视频生成与合成、旁白与字幕、成片预览与导出。高级信息默认折叠，只用于排障和后续开发。
 
@@ -26,7 +26,6 @@ Video Provider 只负责视频片段：
 - `mock`
 - `seedance`
 - `kling`
-- `luma`
 
 它影响：
 
@@ -52,11 +51,11 @@ TTS Provider 只负责旁白音频：
 稳定性边界：
 
 - 稳定 Video Provider：`mock`、`seedance`
-- 实验性 Video Provider：`kling`、`luma`
+- 实验性 Video Provider：`kling`
 - 稳定 TTS Provider：`mock`、`volcengine`
 - 预留 TTS Provider：`openai`、`elevenlabs`
 
-类型支持不等于产品默认开放。网页一键生成下拉框默认只显示稳定 provider。Kling / Luma 只有在明确验收后才能进入稳定链路。
+类型支持不等于产品默认开放。网页一键生成下拉框默认只显示稳定 provider。Kling 只有在明确验收后才能进入稳定链路。
 
 接入新视频 API 时，至少检查：
 

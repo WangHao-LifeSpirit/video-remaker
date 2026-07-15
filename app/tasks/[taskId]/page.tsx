@@ -33,21 +33,6 @@ async function optionalArtifact<T>(filePath?: string): Promise<T | null> {
   }
 }
 
-function JsonBlock({ title, value }: { title: string; value: unknown }) {
-  return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-      <h2 className="text-base font-semibold">{title}</h2>
-      {value ? (
-        <pre className="max-h-96 overflow-auto rounded-md bg-neutral-950 p-3 text-xs leading-5 text-neutral-100">
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      ) : (
-        <p className="text-sm text-neutral-500">尚未生成</p>
-      )}
-    </section>
-  );
-}
-
 type HistoricalError = ErrorRecord & {
   source: "task.json" | "assets.json";
 };
@@ -100,9 +85,10 @@ function ReviewBlock({
   promptsReady: boolean;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-3">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold">Step 2：三 Agent 创作</h2>
+        <p className="section-kicker">STEP 2 · AGENT STUDIO</p>
+        <h2 className="section-title">三 Agent 创作与审稿</h2>
         <p className="text-sm text-neutral-600">这里检查分镜师、内容创作者和总控审稿的产物是否齐全，并允许你运行审稿或应用 prompt 修正。</p>
         <p className="text-sm text-neutral-500">
           review_report.json：{value ? "已生成" : "未生成"}；最近 review：{updatedAt ?? "暂无"}
@@ -171,7 +157,7 @@ function ProviderConfigBlock({
   mockMode: boolean;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-3">
       <h2 className="text-base font-semibold">模型配置说明</h2>
       <div className="grid gap-2 text-sm text-neutral-700 md:grid-cols-3">
         <p>文本模型：当前 LLM_PROVIDER = {llmProvider}</p>
@@ -181,7 +167,7 @@ function ProviderConfigBlock({
       <div className="grid gap-1 text-sm text-neutral-600">
         <p>LLM Provider 影响分析、分镜、改编、video prompts 和 review。</p>
         <p>Video Provider 影响视频片段生成，不影响文本分析。</p>
-        <p>修改 .env 后需要重启 dev server；页面不会显示任何 API Key。</p>
+        <p>在设置页保存后会对后续操作生效；页面不会显示任何 API Key。</p>
       </div>
     </section>
   );
@@ -192,22 +178,26 @@ function SourceMaterialBlock({
   input,
   sourceLink,
   sourceVideo,
-  sourceFrames
+  sourceFrames,
+  visionInputAvailable
 }: {
   taskId: string;
   input: VideoInputArtifact | null;
   sourceLink: SourceLinkInfo | null;
   sourceVideo: SourceVideoMetadata | null;
   sourceFrames: SourceFramesArtifact | null;
+  visionInputAvailable: boolean;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-3">
       <div className="grid gap-1">
-        <h2 className="text-base font-semibold">Step 1：输入材料</h2>
+        <p className="section-kicker">STEP 1 · SOURCE</p>
+        <h2 className="section-title">输入材料</h2>
         <p className="text-sm text-neutral-600">先提供链接、上传原视频，或补充原字幕、文案、画面说明和复刻要求。解析失败也可以继续靠上传和手动材料推进。</p>
       </div>
       <SourceMaterialActions
         taskId={taskId}
+        uploadedVideo={input?.uploaded_video}
         initialNotes={{
           source_link: sourceLink ?? input?.source_link,
           source_transcript: input?.source_transcript,
@@ -248,6 +238,13 @@ function SourceMaterialBlock({
         <p>音轨：{sourceVideo ? sourceVideo.has_audio ? "有" : "无" : "暂无"}</p>
         <p>音频编码：{sourceVideo?.audio_codec ?? "暂无"}</p>
       </div>
+      {input?.uploaded_video?.uploaded_video_path && sourceFrames?.frames.length && !visionInputAvailable && !(
+        input.source_transcript || input.source_caption || input.screenshot_notes || input.remake_requirements
+      ) ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          关键帧已经抽取，但当前文本模型不能直接看见这些画面。请至少补充原字幕、原文案或画面说明，否则系统会暂停生成，避免产出与原视频无关的内容。
+        </p>
+      ) : null}
       <div className="grid gap-2 text-sm">
         <p className="font-medium">补充材料</p>
         <p className="whitespace-pre-wrap rounded-md bg-neutral-50 p-2">原视频字幕：{input?.source_transcript || "暂无"}</p>
@@ -298,11 +295,11 @@ function VoiceoverSubtitleBlock({
   silentWav: { exists: boolean; path: string };
 }) {
   const hasRealVoiceover = voiceoverWav.exists;
-  const currentAudioPath = hasRealVoiceover ? voiceoverWav.path : silentWav.exists ? silentWav.path : "暂无";
   return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-3">
       <div className="grid gap-1">
-        <h2 className="text-base font-semibold">Step 4：旁白与字幕</h2>
+        <p className="section-kicker">STEP 4 · VOICE & CAPTIONS</p>
+        <h2 className="section-title">旁白与字幕</h2>
         <p className="text-sm text-neutral-600">生成旁白稿、字幕稿、SRT 和 mock 音频；字幕烧录会把 SRT 写进成片画面。</p>
       </div>
       <AudioSubtitleActions
@@ -324,12 +321,9 @@ function VoiceoverSubtitleBlock({
       <p className="text-sm text-neutral-600">
         {hasRealVoiceover ? "真实旁白音频已生成。" : silentWav.exists ? "当前为 mock/silent audio。" : "尚未生成音频。"}
       </p>
-      <p className="break-all text-sm text-neutral-500">当前音频路径：{currentAudioPath}</p>
-      <p className="break-all text-sm text-neutral-500">voiceover.wav 路径：{voiceoverWav.path}</p>
-      <p className="break-all text-sm text-neutral-500">silent.wav 路径：{silentWav.path}</p>
       {subtitles?.srt_path ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p className="break-all text-sm text-neutral-500">SRT 路径：{subtitles.srt_path}</p>
+          <p className="text-sm text-neutral-500">SRT 字幕文件已就绪。</p>
           <a
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium"
             href={`/api/tasks/${taskId}/download?file=subtitles.srt`}
@@ -379,7 +373,7 @@ function OutputAssetsBlock({
   manifest: OutputsManifest | null;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--padded grid gap-3">
       <div className="grid gap-1">
         <h2 className="text-base font-semibold">成片资产</h2>
         <p className="text-sm text-neutral-600">这里集中管理最终交付物：原始成片、带字幕成片、封面图、制作包和 JSON 项目包。</p>
@@ -394,7 +388,6 @@ function OutputAssetsBlock({
             <div key={item.key} className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 text-sm md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="font-medium">{item.label}</p>
-                <p className="break-all text-neutral-500">{item.file_path}</p>
                 <p className="text-neutral-500">状态：{item.exists ? "存在" : "缺失"}；大小：{item.size_bytes ? `${Math.round(item.size_bytes / 1024)} KB` : "暂无"}；更新时间：{item.updated_at ?? "暂无"}</p>
               </div>
               {item.exists && item.download_file ? (
@@ -422,6 +415,7 @@ async function finalMp4Info(taskId: string): Promise<{
   hasOriginal: boolean;
   hasSubtitled: boolean;
   subtitledSize?: number;
+  updatedAtMs?: number;
 }> {
   const outputDir = getTaskOutputsDir(taskId);
   const originalPath = path.join(outputDir, "final.mp4");
@@ -439,7 +433,8 @@ async function finalMp4Info(taskId: string): Promise<{
       version: "subtitled",
       hasOriginal,
       hasSubtitled,
-      subtitledSize: subtitledStat?.size
+      subtitledSize: subtitledStat?.size,
+      updatedAtMs: subtitledStat?.mtimeMs
     };
   }
   if (hasOriginal) {
@@ -449,7 +444,8 @@ async function finalMp4Info(taskId: string): Promise<{
       version: "original",
       hasOriginal,
       hasSubtitled,
-      subtitledSize: subtitledStat?.size
+      subtitledSize: subtitledStat?.size,
+      updatedAtMs: originalStat?.mtimeMs
     };
   }
   return {
@@ -472,6 +468,18 @@ async function optionalFileUpdatedAt(filePath?: string): Promise<string | undefi
   }
 }
 
+async function newestFileUpdatedAtMs(filePaths: Array<string | undefined>): Promise<number | undefined> {
+  const timestamps = await Promise.all(
+    filePaths.map(async (filePath) => {
+      if (!filePath) return undefined;
+      const fileStat = await stat(filePath).catch(() => undefined);
+      return fileStat?.isFile() ? fileStat.mtimeMs : undefined;
+    })
+  );
+  const existing = timestamps.filter((value): value is number => value !== undefined);
+  return existing.length ? Math.max(...existing) : undefined;
+}
+
 async function taskFileExists(relativePath: string): Promise<boolean> {
   try {
     const fileStat = await stat(path.join(process.cwd(), relativePath));
@@ -490,6 +498,7 @@ function recommendNextStep(input: {
   hasReview: boolean;
   hasFinalSubtitled: boolean;
   hasFinal: boolean;
+  hasMockAssets: boolean;
 }) {
   if (!input.hasUploadedVideo && !input.hasSourceNotes) {
     return "先在 Step 1 输入链接、上传原视频，或补充原字幕 / 文案 / 画面说明。";
@@ -503,6 +512,9 @@ function recommendNextStep(input: {
   if (!input.hasFinal) {
     return "下一步在 Step 3 运行一键生成并合成 final.mp4。";
   }
+  if (input.hasMockAssets) {
+    return "当前成片仍含 Mock 占位片段。需要正式成片时，请在 Step 3 选择已配置的真实视频 Provider 后重新生成。";
+  }
   if (!input.hasFinalSubtitled) {
     return "下一步在 Step 4 或 Step 5 烧录字幕，生成 final_subtitled.mp4。";
   }
@@ -511,29 +523,42 @@ function recommendNextStep(input: {
 
 function TaskOverviewBlock({
   taskId,
+  taskName,
+  taskStatus,
   nextStep,
   hasUploadedVideo,
   hasFinalSubtitled,
+  hasMockAssets,
   previewVersion,
   latestJobStatus,
   latestJobStep
 }: {
   taskId: string;
+  taskName?: string;
+  taskStatus: string;
   nextStep: string;
   hasUploadedVideo: boolean;
   hasFinalSubtitled: boolean;
+  hasMockAssets: boolean;
   previewVersion: string;
   latestJobStatus: string;
   latestJobStep: string;
 }) {
   return (
-    <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="paper-panel paper-panel--accent paper-panel--padded grid gap-4">
       <div className="grid gap-1">
-        <p className="text-sm font-medium text-neutral-500">任务状态总览</p>
-        <h2 className="break-all text-xl font-semibold">{taskId}</h2>
+        <p className="section-kicker">TASK OVERVIEW</p>
+        <h2 className="section-title break-all">{taskName ?? taskId}</h2>
+        {taskName ? <p className="break-all text-xs text-neutral-500">任务编号：{taskId}</p> : null}
         <p className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">推荐下一步：{nextStep}</p>
+        {taskStatus === "mocked" || hasMockAssets ? (
+          <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            当前任务是 Mock 预览：文件可以播放，但仍含测试占位片段，不是完整真实生成成片。
+          </p>
+        ) : null}
       </div>
-      <div className="grid gap-2 text-sm text-neutral-700 md:grid-cols-5">
+      <div className="grid gap-2 text-sm text-neutral-700 md:grid-cols-6">
+        <p>任务状态：{taskStatus}</p>
         <p>原视频：{hasUploadedVideo ? "已有" : "未上传"}</p>
         <p>带字幕成片：{hasFinalSubtitled ? "已有" : "未生成"}</p>
         <p>预览版本：{previewVersion}</p>
@@ -566,12 +591,13 @@ function HistoryJobsBlock({ jobs }: { jobs: RunFullJob[] }) {
   );
 }
 
-export default async function TaskDetailPage({ params }: { params: { taskId: string } }) {
-  const task = await getTask(params.taskId);
+export default async function TaskDetailPage({ params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
+  const task = await getTask(taskId);
   const runtime = await getRunFullRuntimeStatus();
   const jobs = await listJobsForTask(task.task_id, 8);
   const [latestJob] = jobs;
-  const finalVideo = await finalMp4Info(params.taskId);
+  const finalVideo = await finalMp4Info(taskId);
   const input = await optionalArtifact<VideoInputArtifact>(task.files.input_json);
   const sourceLink = await optionalArtifact<SourceLinkInfo>(
     task.files.source_link_json ?? path.join(getTaskDir(task.task_id), "source_link.json")
@@ -599,6 +625,16 @@ export default async function TaskDetailPage({ params }: { params: { taskId: str
   const outputsManifest = await optionalArtifact<OutputsManifest>(
     task.files.outputs_manifest_json ?? path.join(getTaskOutputsDir(task.task_id), "outputs_manifest.json")
   );
+  const newestDependencyUpdatedAtMs = await newestFileUpdatedAtMs([
+    task.files.input_json,
+    task.files.analysis_json,
+    task.files.storyboard_json,
+    task.files.remake_plan_json,
+    task.files.video_prompts_json,
+    task.files.voiceover_script_json,
+    task.files.subtitles_json,
+    ...(assets?.assets.map((asset) => asset.file_path) ?? [])
+  ]);
   const audioProvider =
     assets?.assets.find((asset) => asset.asset_id === "asset_volc_tts_voiceover")?.provider
     ?? assets?.assets.find((asset) => asset.file_path?.endsWith("/voiceover.wav"))?.provider
@@ -624,17 +660,26 @@ export default async function TaskDetailPage({ params }: { params: { taskId: str
     hasVideoPrompts: Boolean(videoPrompts),
     hasReview: Boolean(reviewReport),
     hasFinalSubtitled: finalVideo.hasSubtitled,
-    hasFinal: finalVideo.hasOriginal
+    hasFinal: finalVideo.hasOriginal,
+    hasMockAssets: Boolean(assets?.mock.is_mock)
   });
   const previewVersion = finalVideo.version === "subtitled" ? "带字幕版" : finalVideo.version === "original" ? "原始版" : "暂无";
+  const latestJobIsRunning = latestJob ? latestJob.status === "queued" || latestJob.status === "running" : false;
+  const finalIsStale = Boolean(
+    finalVideo.exists &&
+    finalVideo.updatedAtMs &&
+    newestDependencyUpdatedAtMs &&
+    newestDependencyUpdatedAtMs > finalVideo.updatedAtMs
+  );
 
   return (
-    <main className="min-h-screen px-5 py-8">
-      <div className="mx-auto grid max-w-6xl gap-5">
+    <main className="workbench-page">
+      <div className="workbench-shell">
         <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm font-medium text-neutral-500">任务详情</p>
-            <h1 className="break-all text-2xl font-semibold tracking-normal">{task.task_id}</h1>
+            <p className="page-kicker">CREATION WORKBENCH</p>
+            <h1 className="page-title break-all">{task.task_name ?? task.task_id}</h1>
+            {task.task_name ? <p className="break-all text-xs text-neutral-500">任务编号：{task.task_id}</p> : null}
           </div>
           <div className="flex gap-2">
             <Link className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium" href="/">
@@ -648,14 +693,24 @@ export default async function TaskDetailPage({ params }: { params: { taskId: str
 
         <TaskOverviewBlock
           taskId={task.task_id}
+          taskName={task.task_name}
+          taskStatus={task.status}
           nextStep={nextStep}
           hasUploadedVideo={Boolean(input?.uploaded_video?.uploaded_video_path)}
           hasFinalSubtitled={finalVideo.hasSubtitled}
+          hasMockAssets={Boolean(assets?.mock.is_mock)}
           previewVersion={previewVersion}
           latestJobStatus={latestJob ? latestJob.status : "暂无"}
           latestJobStep={latestJob ? latestJob.current_step : "暂无"}
         />
-        <SourceMaterialBlock taskId={task.task_id} input={input} sourceLink={sourceLink} sourceVideo={sourceVideo} sourceFrames={sourceFrames} />
+        <SourceMaterialBlock
+          taskId={task.task_id}
+          input={input}
+          sourceLink={sourceLink}
+          sourceVideo={sourceVideo}
+          sourceFrames={sourceFrames}
+          visionInputAvailable={runtime.vision_input_available}
+        />
         <ReviewBlock
           taskId={task.task_id}
           value={reviewReport}
@@ -683,29 +738,31 @@ export default async function TaskDetailPage({ params }: { params: { taskId: str
           hasOriginal={finalVideo.hasOriginal}
           hasSubtitled={finalVideo.hasSubtitled}
           subtitledSize={finalVideo.subtitledSize}
+          isMock={Boolean(assets?.mock?.is_mock)}
+          isGenerating={latestJobIsRunning}
+          isStale={finalIsStale}
         />
         <OutputAssetsBlock taskId={task.task_id} manifest={outputsManifest} />
 
-        <details className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
-          <summary className="cursor-pointer text-base font-semibold">高级信息</summary>
+        <details className="paper-panel paper-panel--padded">
+          <summary className="cursor-pointer text-base font-semibold">高级信息与调试记录</summary>
           <div className="mt-4 grid gap-4">
-            <p className="text-sm text-neutral-600">这里保留历史 jobs、错误日志、Provider 配置和 JSON 调试信息，默认折叠，避免影响日常操作。</p>
+            <p className="text-sm text-neutral-600">这里保留历史 jobs、错误日志和 Provider 配置，默认折叠，避免影响日常操作。</p>
             <HistoryJobsBlock jobs={jobs} />
             <HistoricalErrorLog taskId={task.task_id} errors={historicalErrors} />
             <ProviderConfigBlock llmProvider={runtime.llm_provider} videoProvider={runtime.video_provider} mockMode={runtime.mock_mode} />
-            <details className="rounded-md border border-neutral-200 bg-white p-3">
-              <summary className="cursor-pointer text-sm font-semibold">Debug 信息 / JSON 产物</summary>
-              <div className="mt-3 grid gap-3">
-                <JsonBlock title="输入材料" value={input} />
-                <JsonBlock title="链接解析" value={sourceLink} />
-                <JsonBlock title="解析结果 / task.json" value={task} />
-                <JsonBlock title="分析结果" value={analysis} />
-                <JsonBlock title="分镜表" value={storyboard} />
-                <JsonBlock title="原创改编脚本" value={remakePlan} />
-                <JsonBlock title="视频模型提示词" value={videoPrompts} />
-                <JsonBlock title="素材清单" value={assets} />
-              </div>
-            </details>
+            <div className="rounded-md border border-neutral-200 bg-white p-3 text-sm">
+              <p className="font-semibold">JSON 调试产物</p>
+              <p className="mt-1 text-neutral-600">完整 JSON 改为按需打开，避免大型分镜和提示词长期占用任务页内存。</p>
+              <a
+                className="mt-3 inline-flex rounded-md border border-neutral-300 bg-white px-3 py-2 font-medium"
+                href={`/api/tasks/${task.task_id}`}
+                rel="noreferrer"
+                target="_blank"
+              >
+                在新窗口查看完整 JSON
+              </a>
+            </div>
           </div>
         </details>
       </div>

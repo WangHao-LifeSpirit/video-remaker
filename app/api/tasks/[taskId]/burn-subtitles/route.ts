@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { burnSubtitlesForTask } from "../../../../../lib/tools/subtitle-burner";
 
-export async function POST(request: Request, { params }: { params: { taskId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const body = await request.json().catch(() => ({})) as {
       input?: string;
       output?: string;
     };
     const result = await burnSubtitlesForTask({
-      taskId: params.taskId,
+      taskId,
       input: body.input,
       output: body.output
     });

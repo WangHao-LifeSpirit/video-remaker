@@ -3,7 +3,10 @@ node_modules/
 
 # Next.js build output
 .next/
+.next-dev/
+.next-build/
 out/
+.launcher/
 
 # Environment
 .env
@@ -34,6 +37,9 @@ pnpm-debug.log*
 Thumbs.db
 *.swp
 *.swo
+
+# Local-only macOS launcher
+启动视频复刻工作台.command
 
 # TypeScript incremental cache
 *.tsbuildinfo

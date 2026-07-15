@@ -41,7 +41,8 @@ function resolveAllowedDownload(taskId: string, file: AllowedFile): { baseDir: s
   };
 }
 
-export async function GET(request: Request, { params }: { params: { taskId: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
   try {
     const url = new URL(request.url);
     const file = url.searchParams.get("file");
@@ -49,7 +50,7 @@ export async function GET(request: Request, { params }: { params: { taskId: stri
       return NextResponse.json({ error: "Unsupported download file." }, { status: 400 });
     }
 
-    const { baseDir, filePath } = resolveAllowedDownload(params.taskId, file);
+    const { baseDir, filePath } = resolveAllowedDownload(taskId, file);
     if (!filePath.startsWith(baseDir)) {
       return NextResponse.json({ error: "Invalid download path." }, { status: 400 });
     }

@@ -22,9 +22,14 @@ type ActionPayload = {
 
 export function SourceMaterialActions({
   taskId,
-  initialNotes
+  initialNotes,
+  uploadedVideo
 }: {
   taskId: string;
+  uploadedVideo?: {
+    uploaded_video_path?: string;
+    original_filename?: string;
+  };
   initialNotes: {
     source_link?: SourceLinkInfo;
     source_transcript?: string;
@@ -65,7 +70,8 @@ export function SourceMaterialActions({
         method: "POST",
         body: formData
       }));
-      setMessage(`上传完成：${payload.uploaded_video?.uploaded_video_path ?? payload.uploaded_video?.original_filename ?? "source video"}`);
+      setMessage(`上传完成：${payload.uploaded_video?.original_filename ?? "原视频"}`);
+      setFile(null);
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "上传失败");
@@ -140,6 +146,14 @@ export function SourceMaterialActions({
       </div>
 
       <div className="grid gap-2">
+        {uploadedVideo?.uploaded_video_path ? (
+          <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
+            已上传：{uploadedVideo.original_filename ?? "原视频"}。无需重复上传；只有需要替换原片时才选择新文件。
+          </p>
+        ) : (
+          <p className="text-neutral-500">尚未上传原视频。</p>
+        )}
+        <label className="font-medium text-neutral-700">{uploadedVideo?.uploaded_video_path ? "替换原视频（可选）" : "上传原视频"}</label>
         <input
           type="file"
           accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
@@ -148,7 +162,7 @@ export function SourceMaterialActions({
         />
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={busy !== "idle"} onClick={uploadVideo} className="rounded-md bg-neutral-950 px-3 py-2 font-medium text-white disabled:bg-neutral-500">
-            {busy === "upload" ? "上传中..." : "上传原视频"}
+            {busy === "upload" ? "上传中..." : uploadedVideo?.uploaded_video_path ? "替换原视频" : "上传原视频"}
           </button>
           <button type="button" disabled={busy !== "idle"} onClick={() => postJson("analyze-source")} className="rounded-md border border-neutral-300 bg-white px-3 py-2 font-medium disabled:opacity-60">
             {busy === "analyze-source" ? "读取中..." : "读取元信息"}

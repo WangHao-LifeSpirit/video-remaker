@@ -1,8 +1,19 @@
-# Release v2.0
+# Release v2.1.0
 
-当前版本：v2.0 Local Video Remaker Workbench
+当前版本：v2.1.0 Local Video Remaker Workbench
 
 这是一个本地运行的网页端短视频复刻自动化工作台。它不部署公网，不包含任何 API Key。客户需要在自己的机器上安装依赖、配置 `.env`，并自行管理 DeepSeek / OpenAI / Claude / Seedance 等第三方 API 的额度和费用。
+
+## v2.1.0 重点更新
+
+- 重做了本地工作台界面和五步操作导航，任务状态、Mock 结果和下一步更清楚。
+- 新增模型设置页，密钥只保存在本机 `.env` 且不会回显。
+- 新增 macOS 双击启动器 `Start Video Remaker.command`，支持首次安装、健康检查、端口选择和自动打开浏览器。
+- 输入变更会自动判定下游产物过期，避免复用旧分析、旧提示词或旧成片。
+- 后台 Job 支持防重复、原子写入、损坏文件隔离和超时恢复。
+- 路径、上传、视频流和下载入口已加强边界校验。
+- 发布包默认使用纯 Mock 配置，不会自动打开付费视频生成。
+- 升级到 Next.js 16.2.10，并完成动态路由兼容迁移；发布前 `npm audit --omit=dev` 为 0 个已知漏洞。
 
 ## 稳定链路
 
@@ -20,13 +31,13 @@
 
 ## 已实现能力
 
-- 首页 v2.0 工作台入口、最近任务和说明入口。
+- 首页 v2.1 工作台入口、最近任务和说明入口。
 - 任务详情页按 5 步组织：输入材料、三 Agent 创作、视频生成与合成、旁白与字幕、成片预览与导出。
 - 链接识别与用户补充模式，输出 `source_link.json`。
 - 上传用户自有原视频，读取元信息，抽取关键帧。
 - 保存原字幕、原文案、画面说明和复刻要求。
 - LLM Provider 架构：`mock` / `deepseek` / `openai` / `claude`。
-- Video Provider 架构：`mock` / `seedance` / `kling` / `luma`，稳定链路为 `mock` / `seedance`。
+- Video Provider 架构：`mock` / `seedance` / `kling`，稳定链路为 `mock` / `seedance`。
 - 三 Agent 协作：Storyboard / Content Creator / Review。
 - 总控审稿按钮化和 prompt 修正 apply。
 - Seedance 受成本保护的视频片段生成。
@@ -47,7 +58,7 @@
 - 当前后台 job 是本地 JSON 轻量实现，不是生产级队列系统。
 - TTS 真实调用已预留，但不是当前稳定主链路。
 - ASR 尚未接入真实链路。
-- Kling / Luma 是实验性 provider，不作为当前稳定交付链路。
+- Kling 是实验性 provider，不作为当前稳定交付链路。
 - 本地任务依赖本机文件系统。
 
 ## 安装
