@@ -27,7 +27,7 @@ export function BrandHeader() {
           <a href="https://arthurwanghouse.com" rel="noreferrer" target="_blank">
             个人网站
           </a>
-          <span className="brand-contact">微信 LifeSpirit_One</span>
+          <span className="brand-contact">微信 LifeSpiritHeart</span>
         </nav>
       </div>
     </header>
